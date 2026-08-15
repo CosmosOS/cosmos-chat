@@ -1,41 +1,67 @@
 # Roadmap: Cosmos Community Chat Zone
 
 Status tracker for the Matrix/Element chat zone. Architecture and security
-details live in [docs/secure-chat-zone.md](docs/secure-chat-zone.md); this
-file only tracks what is done and what remains.
+details live in [docs/secure-chat-zone.md](docs/secure-chat-zone.md).
 
 _Last updated: 2026-08-15_
 
 ## ✅ Done
 
-- [x] Host secured: SSH key-only + no root login, nftables (only 22/80/443
-  open), fail2ban, unattended-upgrades, 2 GB swap
-- [x] Rootless Docker running as the non-sudo `chat` user (cgroup v2 limits,
-  unprivileged ports, slirp4netns so real client IPs are preserved)
-- [x] Infomaniak cloud firewall opened for TCP 80/443; verified reachable from
-  the internet with real source IPs
-- [x] Compose stack deployed and healthy: Postgres, Synapse, Element, bridge
-  (Caddy gated behind the `public` compose profile until DNS exists)
-- [x] `.well-known` delegation live on gocosmos.org (HTTP 200, JSON
-  content-type, CORS header verified)
-- [x] Exposure audit: only SSH reachable from the internet; Synapse
-  admin/client API loopback-only (SSH tunnel access)
-- [x] Admin account created + registration invite token minted
-- [x] Discord bridge operational: bot `CosmosMatrixBridge` in CosmosOS (needed
-  an unban + temporarily disabling Dyno's account-age Autoban rule, re-enabled
-  since), guild bridged with `--entire` (30 text-channel portals + space),
-  Discord to Matrix live, Matrix to Discord relay verified in #staff-bot-cmds
-- [x] Docker data-root on the 250 GB data disk (`/mnt/data/docker`): media,
-  Postgres and images no longer on the 20 GB root disk
-- [x] Repo public at github.com/CosmosOS/cosmos-chat (secrets/IPs scrubbed)
-- [x] CI/CD: GitHub Actions deploys to the VPS on every push to main
-  (restricted SSH key, git reset + compose up + health check)
+- [x] VPS provisioned (Infomaniak, Debian 13, 4 vCPU / 11 GB / 20 GB)
+- [x] SSH keys installed locally + `~/.ssh/config` alias for the VPS
+- [x] SSH key copies removed from this repo
+- [x] Architecture & security plan written (`docs/secure-chat-zone.md`)
+- [x] System updated (apt full-upgrade)
+- [x] 2 GB swapfile + `vm.swappiness=10`
+- [x] SSH hardened: key-only, no root login, `AllowUsers debian chat`, max 3 auth tries
+- [x] nftables firewall: default-deny inbound, only 22/80/443 open, enabled at boot
+- [x] fail2ban: sshd jail (systemd backend, aggressive mode, 1 h bans)
+- [x] unattended-upgrades enabled (automatic Debian security updates)
+- [x] `chat` user created (non-sudo, lingering enabled)
+- [x] Docker CE 29.7.2 installed; **rootful daemon disabled**
+- [x] Rootless Docker running as `chat` (cgroup v2: cpu/memory/pids delegated)
+- [x] `net.ipv4.ip_unprivileged_port_start=80` (rootless can bind 80/443)
+- [x] slirp4netns port driver (real client IPs preserved); verified with a test container
+- [x] Infomaniak cloud firewall: TCP 80 + 443 opened; verified reachable from the internet with real source IPs
+- [x] Compose stack scaffolded in this repo: Caddy, Synapse, PostgreSQL, Element, mautrix-discord (+ hardening per plan §5)
+- [x] Secrets tooling: `scripts/gen-secrets.sh`, `.env.example`, `.gitignore`
+- [x] `.well-known` files + `.htaccess` prepared in `wellknown/`
+- [x] Deploy instructions in `README.md`, bridge guide in `bridge/README.md`
+- [x] Secrets generated (`.env` + `synapse/homeserver.yaml`, ACME email set)
+- [x] Repo deployed to VPS at `/home/chat/cosmos-chat`
+- [x] Images pulled and pinned by sha256 digest in `compose.yml`
+- [x] Postgres + Synapse + Element running and **healthy** on the VPS
+  (signing key generated, DB initialized; Caddy intentionally not started, needs DNS for TLS)
+- [x] `.well-known` files live on gocosmos.org (uploaded via hosting file manager to
+  `public_html/.well-known/matrix/`); verified: HTTP 200, JSON content-type, CORS header
+- [x] External exposure audit: only SSH reachable from the internet; Synapse admin/client API
+  bound to VPS loopback only (SSH tunnel access)
+- [x] Homeserver admin account created + registration invite token minted
+- [x] mautrix-discord configured (config + registration generated, DB initialized) and
+  registered with Synapse; bridge container running, `@discordbot:gocosmos.org` alive
+- [x] Discord bot `CosmosMatrixBridge` created, intents enabled, added to CosmosOS
+  (after unban + temporarily disabling Dyno's account-age Autoban rule)
+- [x] **CosmosOS guild bridged** (`guilds bridge --entire`): 30 text-channel portals +
+  space/categories; Discord→Matrix live
+- [x] Matrix→Discord relay verified in #staff-bot-cmds (`!discord set-relay --create`
+  + test message delivered); relay webhook needed per channel for two-way
+- [x] Docker data-root moved to the 250 GB data disk (`/mnt/data/docker`, persistent
+  fstab mount); media store, Postgres and images no longer on the 20 GB root disk
+- [x] Repo published to github.com/CosmosOS/cosmos-chat (secrets/IPs scrubbed)
+- [x] CI/CD: GitHub Actions deploys on every push to main (SSH as unprivileged user,
+  git reset + compose up + health check); Caddy gated behind the `public` compose
+  profile until DNS exists
+- [x] Dyno's Autoban module re-enabled on CosmosOS
 
 ## 🔴 Blocked: needs action in external panels (Valentin)
 
-- [ ] **Add the DNS records for gocosmos.org**: `matrix` and `chat`, A + AAAA,
-  pointing at the VPS (exact records in
-  [docs/secure-chat-zone.md](docs/secure-chat-zone.md) §1)
+- [ ] **Add DNS records for gocosmos.org:**
+  ```
+  matrix.gocosmos.org   A     <VPS_IPV4>
+  matrix.gocosmos.org   AAAA  <VPS_IPV6>
+  chat.gocosmos.org     A     <VPS_IPV4>
+  chat.gocosmos.org     AAAA  <VPS_IPV6>
+  ```
 
 ## ⏭️ Next (in order)
 
