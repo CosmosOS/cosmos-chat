@@ -1,0 +1,4 @@
+<FilesMatch "^(server|client)$">
+  Header set Access-Control-Allow-Origin "*"
+  Header set Content-Type "application/json"
+</FilesMatch>

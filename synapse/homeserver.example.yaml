@@ -1,0 +1,68 @@
+# Synapse configuration — Cosmos Chat Zone
+# Template: run scripts/gen-secrets.sh to produce synapse/homeserver.yaml
+# with real secrets (that file is gitignored).
+
+server_name: "gocosmos.org"
+public_baseurl: "https://matrix.gocosmos.org/"
+pid_file: /data/homeserver.pid
+signing_key_path: "/data/gocosmos.org.signing.key"
+log_config: "/config/log.config"
+media_store_path: "/data/media_store"
+report_stats: false
+
+listeners:
+  - port: 8008
+    tls: false
+    type: http
+    x_forwarded: true
+    bind_addresses: ['0.0.0.0']
+    resources:
+      - names: [client, federation]
+        compress: false
+
+database:
+  name: psycopg2
+  args:
+    user: synapse
+    password: "__POSTGRES_SYNAPSE_PASSWORD__"
+    dbname: synapse
+    host: postgres
+    port: 5432
+    cp_min: 5
+    cp_max: 10
+
+registration_shared_secret: "__REGISTRATION_SHARED_SECRET__"
+macaroon_secret_key: "__MACAROON_SECRET_KEY__"
+form_secret: "__FORM_SECRET__"
+
+# Invite-token registration: no open signup, admins mint tokens
+enable_registration: true
+registration_requires_token: true
+allow_guest_access: false
+
+password_config:
+  policy:
+    enabled: true
+    minimum_length: 12
+
+# SSRF vector — keep disabled
+url_preview_enabled: false
+
+max_upload_size: 20M
+
+# 20 GB disk: prune media aggressively
+media_retention:
+  local_media_lifetime: 90d
+  remote_media_lifetime: 14d
+
+trusted_key_servers:
+  - server_name: "matrix.org"
+suppress_key_server_warning: true
+
+presence:
+  enabled: true
+
+# Uncomment once the Discord bridge registration exists
+# (see bridge/README.md, and the matching mount in compose.yml):
+# app_service_config_files:
+#   - /config/appservices/discord-registration.yaml

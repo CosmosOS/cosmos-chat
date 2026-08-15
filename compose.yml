@@ -1,0 +1,130 @@
+name: cosmos-chat
+
+networks:
+  frontend:
+  backend:
+    internal: true
+
+volumes:
+  caddy-data:
+  caddy-config:
+  pgdata:
+  synapse-data:
+  bridge-data:
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  caddy:
+    <<: *hardening
+    image: caddy:2@sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [frontend]
+    mem_limit: 512m
+    pids_limit: 256
+    depends_on:
+      - synapse
+      - element
+
+  element:
+    <<: *hardening
+    image: vectorim/element-web:latest@sha256:ac50d4eebafd954d7d7e2887d4693bcc91c54c0d00546a3410eeae77e6b342d5
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+    read_only: true
+    # loopback only: preview via SSH tunnel; public access goes through Caddy
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./element/config.json:/app/config.json:ro
+      - { type: tmpfs, target: /tmp, tmpfs: { mode: 0o1777 } }
+      - { type: tmpfs, target: /var/cache/nginx, tmpfs: { mode: 0o1777 } }
+      - { type: tmpfs, target: /var/run, tmpfs: { mode: 0o1777 } }
+      - { type: tmpfs, target: /etc/nginx/conf.d, tmpfs: { mode: 0o1777 } }
+    networks: [frontend]
+    mem_limit: 256m
+    pids_limit: 128
+
+  synapse:
+    <<: *hardening
+    image: matrixdotorg/synapse:latest@sha256:39f47bcea65c544ef3a6d58848ee98e2ea98387e9991df30474d25b54477a0af
+    # /data volume is pre-owned by 991:991 (see README deploy notes)
+    user: "991:991"
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
+    environment:
+      SYNAPSE_CONFIG_PATH: /config/homeserver.yaml
+    # loopback only: admin/client API via SSH tunnel, never exposed publicly
+    ports:
+      - "127.0.0.1:8008:8008"
+    volumes:
+      - synapse-data:/data
+      - ./synapse/homeserver.yaml:/config/homeserver.yaml:ro
+      - ./synapse/log.config:/config/log.config:ro
+      - ./synapse/discord-registration.yaml:/config/appservices/discord-registration.yaml:ro
+    networks: [frontend, backend]
+    mem_limit: 4g
+    pids_limit: 512
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    <<: *hardening
+    image: postgres:17@sha256:e42539a54ee3e82e21f19d7eded61b579869585f86b90b5e851ff0d3dd8b4001
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    read_only: true
+    tmpfs: [/tmp, /var/run/postgresql]
+    environment:
+      POSTGRES_USER: synapse
+      POSTGRES_PASSWORD: ${POSTGRES_SYNAPSE_PASSWORD}
+      POSTGRES_DB: synapse
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+      BRIDGE_DB_PASSWORD: ${POSTGRES_BRIDGE_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init-bridge-db.sh:/docker-entrypoint-initdb.d/init-bridge-db.sh:ro
+    networks: [backend]
+    mem_limit: 2g
+    pids_limit: 256
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U synapse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  bridge:
+    <<: *hardening
+    image: dock.mau.dev/mautrix/discord:latest@sha256:2f4fccba61d3503ec951c44ba3f8c704acb79ca3c159ce0d1b35340e0c38f2c7
+    cap_drop: [ALL]
+    cap_add: [CHOWN, SETGID, SETUID]
+    read_only: true
+    tmpfs: [/tmp]
+    volumes:
+      - bridge-data:/data
+    networks: [frontend, backend]
+    mem_limit: 512m
+    pids_limit: 256
+    depends_on:
+      postgres:
+        condition: service_healthy

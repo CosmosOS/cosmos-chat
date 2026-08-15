@@ -1,0 +1,15 @@
+# Secrets — never commit
+.env
+secrets/
+synapse/homeserver.yaml
+synapse/*.signing.key
+synapse/discord-registration.yaml
+bridge/config.yaml
+bridge/registration.yaml
+*.key
+*.pem
+ssh.private
+ssh.public
+
+# Local tooling
+.claude/
