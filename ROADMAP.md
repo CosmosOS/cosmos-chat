@@ -22,9 +22,9 @@ _Last updated: 2026-08-15_
   admin/client API loopback-only (SSH tunnel access)
 - [x] Admin account created + registration invite token minted
 - [x] Discord bridge operational: bot `CosmosMatrixBridge` in CosmosOS (needed
-  an unban + disabling Dyno's account-age Autoban rule; re-enable it!), guild
-  bridged with `--entire` (30 text-channel portals + space), Discord to Matrix
-  live, Matrix to Discord relay verified in #staff-bot-cmds
+  an unban + temporarily disabling Dyno's account-age Autoban rule, re-enabled
+  since), guild bridged with `--entire` (30 text-channel portals + space),
+  Discord to Matrix live, Matrix to Discord relay verified in #staff-bot-cmds
 - [x] Docker data-root on the 250 GB data disk (`/mnt/data/docker`): media,
   Postgres and images no longer on the 20 GB root disk
 - [x] Repo public at github.com/CosmosOS/cosmos-chat (secrets/IPs scrubbed)
@@ -36,8 +36,6 @@ _Last updated: 2026-08-15_
 - [ ] **Add the DNS records for gocosmos.org**: `matrix` and `chat`, A + AAAA,
   pointing at the VPS (exact records in
   [docs/secure-chat-zone.md](docs/secure-chat-zone.md) §1)
-- [ ] **Re-enable Dyno's Autoban module** on CosmosOS (disabled to let the
-  bot join)
 
 ## ⏭️ Next (in order)
 
