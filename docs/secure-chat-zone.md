@@ -38,13 +38,13 @@ flowchart LR
         W["gocosmos.org<br/>FTP hosting<br/>.well-known JSON"]
     end
 
-    subgraph VPS["Infomaniak VPS, rootless Docker (user chat)"]
+    subgraph VPS["Infomaniak VPS - rootless Docker (user chat)"]
         C["Caddy<br/>ports 80 + 443, TLS"]
         subgraph frontend["net: frontend"]
             E["Element Web<br/>static files"]
             S["Synapse<br/>port 8008"]
         end
-        subgraph backend["net: backend (not exposed)"]
+        subgraph backend["net: backend - not exposed"]
             P[("PostgreSQL")]
             B["mautrix-discord<br/>bridge"]
         end
