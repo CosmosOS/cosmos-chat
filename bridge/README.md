@@ -1,6 +1,6 @@
 # mautrix-discord bridge setup
 
-The bridge generates its own default config on first run — we then edit a few
+The bridge generates its own default config on first run; we then edit a few
 fields and let it generate the appservice registration for Synapse.
 All commands run on the VPS as the `chat` user, from the repo directory.
 
@@ -25,8 +25,8 @@ docker run --rm -v cosmos-chat_bridge-data:/data -v "$PWD/bridge":/out alpine \
 
 - `homeserver.address`: `http://synapse:8008`
 - `homeserver.domain`: `gocosmos.org`
-- `appservice.address`: `http://bridge:<port>` — keep the default `port` from the
-  generated file and make the hostname `bridge`
+- `appservice.address`: `http://bridge:<port>` (keep the default `port` from
+  the generated file and make the hostname `bridge`)
 - `appservice.database`: (in `database.uri` on newer versions)
   `postgres://mautrix_discord:<POSTGRES_BRIDGE_PASSWORD from .env>@postgres/mautrix_discord?sslmode=disable`
 - `bridge.permissions`:
@@ -66,5 +66,5 @@ guilds status            # list guilds the bot sees
 guilds bridge <guild-id> --entire   # or bridge selected channels only
 ```
 
-Registration/config contain secrets (`as_token`, `hs_token`, bot token) —
-they are gitignored; never commit them.
+Registration/config contain secrets (`as_token`, `hs_token`, bot token);
+they are gitignored, never commit them.

@@ -7,11 +7,11 @@ cd "$(dirname "$0")/.."
 rand() { openssl rand -hex 32; }
 
 if [[ -f .env ]]; then
-  echo "ERROR: .env already exists — remove it first if you really want new secrets." >&2
+  echo "ERROR: .env already exists; remove it first if you really want new secrets." >&2
   exit 1
 fi
 if [[ -f synapse/homeserver.yaml ]]; then
-  echo "ERROR: synapse/homeserver.yaml already exists — remove it first if you really want new secrets." >&2
+  echo "ERROR: synapse/homeserver.yaml already exists; remove it first if you really want new secrets." >&2
   exit 1
 fi
 

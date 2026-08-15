@@ -1,4 +1,4 @@
-# Synapse configuration — Cosmos Chat Zone
+# Synapse configuration for the Cosmos Chat Zone
 # Template: run scripts/gen-secrets.sh to produce synapse/homeserver.yaml
 # with real secrets (that file is gitignored).
 
@@ -45,7 +45,7 @@ password_config:
     enabled: true
     minimum_length: 12
 
-# SSRF vector — keep disabled
+# SSRF vector, keep disabled
 url_preview_enabled: false
 
 max_upload_size: 20M

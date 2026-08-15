@@ -41,7 +41,8 @@ repo: they are generated locally and never committed.
 ```bash
 # 1. Generate secrets (writes .env + synapse/homeserver.yaml, both gitignored)
 ./scripts/gen-secrets.sh
-$EDITOR .env                      # set ACME_EMAIL
+$EDITOR .env                      # set ACME_EMAIL; set COMPOSE_PROFILES=public
+                                  # once DNS points at the VPS (starts Caddy)
 
 # 2. Ship the repo to the VPS (a dedicated non-sudo user runs the stack)
 scp -r . <vps>:/tmp/cosmos-chat && \
