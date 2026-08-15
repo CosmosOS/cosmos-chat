@@ -47,6 +47,10 @@ _Last updated: 2026-08-15_
   + test message delivered) — relay webhook needed per channel for two-way
 - [x] Docker data-root moved to the 250 GB data disk (`/mnt/data/docker`, persistent
   fstab mount) — media store, Postgres and images no longer on the 20 GB root disk
+- [x] Repo published to github.com/CosmosOS/cosmos-chat (secrets/IPs scrubbed)
+- [x] CI/CD: GitHub Actions deploys on every push to main (SSH as unprivileged user,
+  git reset + compose up + health check); Caddy gated behind the `public` compose
+  profile until DNS exists
 
 ## 🔴 Blocked — needs action in external panels (Valentin)
 
