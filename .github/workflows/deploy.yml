@@ -1,0 +1,42 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Deploy to VPS
+        run: |
+          ssh -o IdentitiesOnly=yes "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" '
+            set -e
+            export DOCKER_HOST="unix:///run/user/$(id -u)/docker.sock"
+            cd ~/cosmos-chat
+            git fetch -q origin main
+            git reset --hard -q origin/main
+            docker compose config -q
+            docker compose up -d --remove-orphans
+          '
+
+      - name: Health check
+        run: |
+          ssh -o IdentitiesOnly=yes "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" '
+            export DOCKER_HOST="unix:///run/user/$(id -u)/docker.sock"
+            cd ~/cosmos-chat
+            docker compose ps --format "table {{.Name}}\t{{.Status}}"
+            curl -fsS http://127.0.0.1:8008/health >/dev/null && echo "synapse: OK"
+          '

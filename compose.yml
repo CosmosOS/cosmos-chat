@@ -24,6 +24,8 @@ x-hardening: &hardening
 services:
   caddy:
     <<: *hardening
+    # Only started when COMPOSE_PROFILES=public is set in .env (needs DNS + TLS).
+    profiles: [public]
     image: caddy:2@sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d
     cap_drop: [ALL]
     read_only: true
