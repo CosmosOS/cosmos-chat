@@ -152,6 +152,10 @@ def process(user):
         matrix(f"/_matrix/client/v3/profile/{quote(mxid, safe='')}/avatar_url", "PUT",
                {"avatar_url": mxc}, token=user_token)
 
+    # Lift the per-user ratelimit while we burst-join ~40 rooms, restore after.
+    override = f"/_synapse/admin/v1/users/{quote(mxid, safe='')}/override_ratelimit"
+    matrix(override, "POST", {"messages_per_second": 0, "burst_count": 0})
+
     joined = 0
     for room, name in bridged_rooms():
         rq = quote(room, safe="")
@@ -178,6 +182,7 @@ def process(user):
         else:
             log("join gave up after retries:", name)
 
+    matrix(override, "DELETE")
     dm(uid,
        "Welcome to the Cosmos Matrix server! 🎉\n"
        f"Your account is ready and already joined to {joined} bridged channels.\n\n"
