@@ -35,6 +35,13 @@ registration_shared_secret: "__REGISTRATION_SHARED_SECRET__"
 macaroon_secret_key: "__MACAROON_SECRET_KEY__"
 form_secret: "__FORM_SECRET__"
 
+# Allow bursts of local room joins (onboarding auto-joins ~40 bridged rooms);
+# remote/federated joins keep the stricter defaults
+rc_joins:
+  local:
+    per_second: 5
+    burst_count: 60
+
 # Invite-token registration: no open signup, admins mint tokens
 enable_registration: true
 registration_requires_token: true

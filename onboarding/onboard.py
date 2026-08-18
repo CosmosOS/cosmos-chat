@@ -160,11 +160,23 @@ def process(user):
                    {"user_id": mxid}, token=AS_TOKEN, as_user=BOT_MXID)
         except urllib.error.HTTPError as e:
             log("invite failed:", name, e.code)
-        try:
-            matrix(f"/_matrix/client/v3/rooms/{rq}/join", "POST", {}, token=user_token)
-            joined += 1
-        except urllib.error.HTTPError as e:
-            log("join failed:", name, e.code)
+        for _ in range(6):
+            try:
+                matrix(f"/_matrix/client/v3/rooms/{rq}/join", "POST", {}, token=user_token)
+                joined += 1
+                break
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    try:
+                        wait = json.loads(e.read()).get("retry_after_ms", 2000) / 1000
+                    except Exception:
+                        wait = 2
+                    time.sleep(min(wait + 0.1, 15))
+                    continue
+                log("join failed:", name, e.code)
+                break
+        else:
+            log("join gave up after retries:", name)
 
     dm(uid,
        "Welcome to the Cosmos Matrix server! 🎉\n"
