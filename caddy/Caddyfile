@@ -51,6 +51,10 @@ chat.gocosmos.org {
 		root * /srv/cosmos-icons
 		file_server
 	}
+	# Public registration page (ALTCHA proof-of-work captcha, see join/)
+	handle /join* {
+		reverse_proxy join:8080
+	}
 	handle {
 		reverse_proxy element:80
 	}

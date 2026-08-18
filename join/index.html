@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Join Cosmos Chat</title>
+<link rel="icon" href="/favicon.ico">
+<script async defer type="module" src="/join/altcha.js"></script>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: Inter, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #10131a url("/branding/welcome-bg.jpg") center / cover no-repeat fixed;
+    color: #e8eaed; min-height: 100vh; display: flex;
+    align-items: center; justify-content: center; padding: 24px;
+  }
+  .card {
+    background: rgba(22, 25, 31, .93); border: 1px solid #2b313b;
+    border-radius: 12px; padding: 36px 32px; width: 100%; max-width: 420px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, .55);
+  }
+  .logo { display: block; width: 64px; height: 64px; margin: 0 auto 16px; }
+  h1 { font-size: 22px; text-align: center; margin-bottom: 4px; }
+  .sub { color: #9aa3af; font-size: 14px; text-align: center; margin-bottom: 24px; }
+  label { display: block; font-size: 13px; color: #9aa3af; margin: 14px 0 6px; }
+  input {
+    width: 100%; padding: 11px 12px; font-size: 15px; color: #e8eaed;
+    background: #10131a; border: 1px solid #394049; border-radius: 8px;
+  }
+  input:focus { outline: none; border-color: #0dbd8b; }
+  .mxid { font-size: 12px; color: #6b7280; margin-top: 6px; min-height: 15px; }
+  altcha-widget {
+    display: block; margin-top: 18px;
+    --altcha-color-base: #10131a; --altcha-color-text: #e8eaed;
+    --altcha-color-border: #394049; --altcha-border-radius: 8px;
+    --altcha-max-width: 100%;
+  }
+  button {
+    width: 100%; margin-top: 18px; padding: 12px; font-size: 15px;
+    font-weight: 600; color: #fff; background: #0dbd8b; border: none;
+    border-radius: 8px; cursor: pointer;
+  }
+  button:hover { background: #0aa87c; }
+  button:disabled { background: #2b313b; color: #6b7280; cursor: default; }
+  .msg { margin-top: 14px; font-size: 14px; display: none; }
+  .msg.error { display: block; color: #f28b82; }
+  .foot { margin-top: 22px; font-size: 13px; color: #9aa3af; text-align: center; }
+  a { color: #0dbd8b; text-decoration: none; }
+  .hp { position: absolute; left: -9999px; }
+  .success { text-align: center; display: none; }
+  .success h1 { margin-bottom: 12px; }
+  .success p { color: #9aa3af; font-size: 14px; margin-bottom: 22px; }
+  .success a.go {
+    display: inline-block; padding: 12px 28px; background: #0dbd8b;
+    color: #fff; font-weight: 600; border-radius: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <form id="form">
+    <img class="logo" src="/branding/icon.png" alt="Cosmos">
+    <h1>Join Cosmos Chat</h1>
+    <p class="sub">Create your account on the Cosmos community Matrix server</p>
+
+    <label for="username">Username</label>
+    <input id="username" name="username" autocomplete="username" required
+           maxlength="32" pattern="[A-Za-z0-9._=\-]{2,32}" spellcheck="false">
+    <div class="mxid" id="mxid"></div>
+
+    <label for="password">Password <span style="color:#6b7280">(12 characters minimum)</span></label>
+    <input id="password" name="password" type="password"
+           autocomplete="new-password" required minlength="12">
+
+    <!-- honeypot: bots fill it, humans never see it -->
+    <input class="hp" type="text" name="website" tabindex="-1" autocomplete="off">
+
+    <altcha-widget challengeurl="/join/challenge" maxnumber="250000"></altcha-widget>
+
+    <button id="submit" type="submit">Create account</button>
+    <p class="msg" id="msg"></p>
+    <p class="foot">Already have an account? <a href="https://chat.gocosmos.org">Sign in</a></p>
+  </form>
+
+  <div class="success" id="success">
+    <img class="logo" src="/branding/icon.png" alt="Cosmos">
+    <h1>Account created 🎉</h1>
+    <p id="created-as"></p>
+    <a class="go" href="https://chat.gocosmos.org">Open Cosmos Chat</a>
+  </div>
+</div>
+
+<script>
+  const form = document.getElementById("form");
+  const user = document.getElementById("username");
+  const msg = document.getElementById("msg");
+  const btn = document.getElementById("submit");
+
+  user.addEventListener("input", () => {
+    const u = user.value.trim().toLowerCase();
+    document.getElementById("mxid").textContent = u ? "@" + u + ":gocosmos.org" : "";
+  });
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    msg.className = "msg";
+    const data = Object.fromEntries(new FormData(form));
+    if (!data.altcha) {
+      msg.textContent = "Please complete the anti-bot check first.";
+      msg.className = "msg error";
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "Creating account…";
+    try {
+      const resp = await fetch("/join/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      });
+      const out = await resp.json();
+      if (out.ok) {
+        document.getElementById("created-as").textContent =
+          "Signed up as @" + data.username.trim().toLowerCase() + ":gocosmos.org";
+        form.style.display = "none";
+        document.getElementById("success").style.display = "block";
+        return;
+      }
+      msg.textContent = out.error || "Registration failed. Try again.";
+    } catch {
+      msg.textContent = "Network error. Try again.";
+    }
+    msg.className = "msg error";
+    btn.disabled = false;
+    btn.textContent = "Create account";
+  });
+</script>
+</body>
+</html>

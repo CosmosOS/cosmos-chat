@@ -26,10 +26,12 @@ OWASP Docker Top 10.
 | Element | `vectorim/element-web` | Static web client, separate origin from Synapse |
 | PostgreSQL | `postgres:17` | Databases for Synapse and the bridge, internal network only |
 | mautrix-discord | `dock.mau.dev/mautrix/discord` | Discord ↔ Matrix bridge (relay mode via webhooks) |
+| Onboarding | `python:3.13-slim` | Discord reaction → auto-created Matrix account (`onboarding/onboard.py`) |
+| Join page | `python:3.13-slim` | Public signup at `/join` behind a self-hosted ALTCHA captcha (`join/join.py`) |
 
 Security highlights: images pinned by sha256 digest, `cap_drop: ALL`,
 `no-new-privileges`, read-only root filesystems, memory/pid limits, an
-`internal: true` backend network, invite-token-only registration, and the
+`internal: true` backend network, captcha-gated registration (see below), and the
 Synapse admin API blocked at the reverse proxy (reachable only through an SSH
 tunnel to the VPS loopback).
 
@@ -69,11 +71,21 @@ docker compose exec synapse register_new_matrix_user \
 # 7. Bridge the Discord server → bridge/README.md
 ```
 
-## Registration (invite-only)
+## Registration
 
-Public signup is disabled: registration requires an invite token, minted by an
-admin via the Synapse admin API (only reachable through an SSH tunnel:
-`ssh -L 8008:localhost:8008 <vps>`).
+Three doors, no Google services involved:
+
+- **https://chat.gocosmos.org/join**: the public signup link (shared from
+  gocosmos.org). Protected by [ALTCHA](https://altcha.org), a FOSS
+  proof-of-work captcha served entirely from our own stack (widget vendored
+  in `join/altcha.js`, MIT), plus a honeypot field and per-IP rate limits.
+  Accounts are created through Synapse's shared-secret endpoint.
+- **Discord reaction**: reacting ✅ on the watched announcement message
+  auto-creates a mirrored account (see `onboarding/onboard.py`).
+- **Element's own register screen** stays invite-token gated
+  (`registration_requires_token`), so bots hitting the raw client API get
+  nothing; admins can still mint tokens via the admin API over an SSH tunnel
+  (`ssh -L 8008:localhost:8008 <vps>`).
 
 ## Repo layout
 
@@ -84,6 +96,8 @@ synapse/                  # homeserver.example.yaml (template) + log.config
 element/config.json       # Element web configuration
 postgres/                 # first-boot init script (bridge DB)
 bridge/                   # mautrix-discord setup guide (configs generated, gitignored)
+onboarding/onboard.py     # Discord reaction -> Matrix account daemon
+join/                     # public signup page (ALTCHA captcha + vendored widget)
 wellknown/                # files served at gocosmos.org/.well-known/matrix/
 scripts/gen-secrets.sh    # creates .env + homeserver.yaml with random secrets
 docs/secure-chat-zone.md  # architecture & threat-model documentation

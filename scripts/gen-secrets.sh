@@ -17,14 +17,16 @@ fi
 
 PG_SYNAPSE=$(rand)
 PG_BRIDGE=$(rand)
+REG_SECRET=$(rand)
 
 sed -e "s/^POSTGRES_SYNAPSE_PASSWORD=.*/POSTGRES_SYNAPSE_PASSWORD=$PG_SYNAPSE/" \
     -e "s/^POSTGRES_BRIDGE_PASSWORD=.*/POSTGRES_BRIDGE_PASSWORD=$PG_BRIDGE/" \
+    -e "s/^REGISTRATION_SHARED_SECRET=.*/REGISTRATION_SHARED_SECRET=$REG_SECRET/" \
     .env.example > .env
 chmod 600 .env
 
 sed -e "s/__POSTGRES_SYNAPSE_PASSWORD__/$PG_SYNAPSE/" \
-    -e "s/__REGISTRATION_SHARED_SECRET__/$(rand)/" \
+    -e "s/__REGISTRATION_SHARED_SECRET__/$REG_SECRET/" \
     -e "s/__MACAROON_SECRET_KEY__/$(rand)/" \
     -e "s/__FORM_SECRET__/$(rand)/" \
     synapse/homeserver.example.yaml > synapse/homeserver.yaml

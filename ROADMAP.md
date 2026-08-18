@@ -79,9 +79,16 @@ _Last updated: 2026-08-18_
   every bridged channel + the space (appservice impersonation for invites,
   per-user ratelimit override for the join burst, local `rc_joins` raised),
   and DMs the credentials; verified end-to-end with a real user (42 rooms)
+- [x] **Public join page** (`join/join.py` + vendored ALTCHA widget, served at
+  https://chat.gocosmos.org/join): one shareable signup link for gocosmos.org,
+  bot protection without Google (self-hosted proof-of-work captcha, honeypot,
+  per-IP and global rate limits, single-use signed challenges); accounts are
+  created via Synapse's shared-secret endpoint while the raw client API stays
+  invite-token gated
 
 ## ⏭️ Next (in order)
 
+- [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org
 - [ ] Relay webhooks for more channels when wanted (`!discord set-relay
   --create` per portal; only #staff-bot-cmds is two-way for now); keep
   announcement and read-only channels one-way

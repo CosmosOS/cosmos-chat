@@ -142,6 +142,23 @@ services:
     depends_on:
       - synapse
 
+  join:
+    <<: *hardening
+    image: python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
+    command: ["python", "-u", "/app/join.py"]
+    environment:
+      REGISTRATION_SHARED_SECRET: ${REGISTRATION_SHARED_SECRET:-}
+    volumes:
+      - ./join:/app:ro
+    networks: [frontend]
+    mem_limit: 128m
+    pids_limit: 64
+    depends_on:
+      - synapse
+
   bridge:
     <<: *hardening
     image: dock.mau.dev/mautrix/discord:latest@sha256:2f4fccba61d3503ec951c44ba3f8c704acb79ca3c159ce0d1b35340e0c38f2c7
