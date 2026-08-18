@@ -62,15 +62,23 @@ _Last updated: 2026-08-18_
   `/_synapse/admin` blocked with 403, `.well-known` served
 - [x] **Federation validated**: federationtester.matrix.org reports
   AllChecksOK + valid certificates for `gocosmos.org`
+- [x] Relay identity fixed: bot login moved to a dedicated `@cosmosbridge`
+  Matrix account (per mautrix docs), admin account logged out of the bridge;
+  Matrix messages now go through the channel relay webhook and show the
+  sender's Matrix displayname on Discord (verified in #staff-bot-cmds)
+- [x] Avatar proxy wired up: bridge `public_address` set to
+  matrix.gocosmos.org + Caddy route `/mautrix-discord/*` to the bridge
+- [x] Admin logged in via Element at chat.gocosmos.org
+- [x] Discord avatar mirrored onto the admin's Matrix profile; relay messages
+  on Discord now show the sender's name and picture (no automatic
+  username-matching in mautrix: dual-account users either set a Matrix
+  avatar or `login-qr` with their own Discord account for native identity)
 
 ## ⏭️ Next (in order)
 
-- [ ] Log in at chat.gocosmos.org (admin account + invite token ready)
-- [ ] Enable relay webhooks (`!discord set-relay --create`) in the channels
-  that should be two-way (done: #staff-bot-cmds); leave announcement and
-  read-only channels one-way
-- [ ] Set bridge `public_address` + Caddy route `/mautrix-discord/avatar/*`
-  so Matrix avatars show on Discord relay messages
+- [ ] Relay webhooks for more channels when wanted (`!discord set-relay
+  --create` per portal; only #staff-bot-cmds is two-way for now); keep
+  announcement and read-only channels one-way
 - [ ] Backups: restic (pg_dump + signing key + configs) to off-box storage;
   test a restore
 - [ ] Disk usage alert (80 % threshold) + weekly image update routine
