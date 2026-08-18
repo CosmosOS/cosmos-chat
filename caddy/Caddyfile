@@ -39,6 +39,12 @@ chat.gocosmos.org {
 		rewrite * /icon.png
 		file_server
 	}
+	# Welcome/login page logo (element-logo.svg, element-app-logo.png, opengraph)
+	handle /themes/element/img/logos/* {
+		root * /srv/cosmos-icons
+		rewrite * /icon.png
+		file_server
+	}
 	handle {
 		reverse_proxy element:80
 	}
