@@ -40,7 +40,9 @@ services:
     environment:
       ACME_EMAIL: ${ACME_EMAIL}
     volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Directory mount, not the file: git deploys replace files by inode,
+      # which leaves a single-file bind mount pointing at the old content
+      - ./caddy:/etc/caddy:ro
       - ./caddy/assets:/srv/cosmos-icons:ro
       - caddy-data:/data
       - caddy-config:/config
@@ -134,7 +136,7 @@ services:
       GUILD_ID: ${GUILD_ID:-}
       ONBOARD_WATCH: ${ONBOARD_WATCH:-}
     volumes:
-      - ./onboarding/onboard.py:/app/onboard.py:ro
+      - ./onboarding:/app:ro
       - onboarding-data:/state
     networks: [frontend]
     mem_limit: 256m
