@@ -153,9 +153,12 @@ services:
     command: ["python", "-u", "/app/join.py"]
     environment:
       REGISTRATION_SHARED_SECRET: ${REGISTRATION_SHARED_SECRET:-}
-      # auto-join new accounts to every bridged room (same tokens as onboarding)
+      # auto-join new accounts to the bridged rooms @everyone can see on
+      # Discord (same tokens as onboarding)
       ONBOARD_ADMIN_TOKEN: ${ONBOARD_ADMIN_TOKEN:-}
       BRIDGE_AS_TOKEN: ${BRIDGE_AS_TOKEN:-}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      GUILD_ID: ${GUILD_ID:-}
     volumes:
       - ./join:/app:ro
     networks: [frontend]

@@ -94,31 +94,73 @@ def dm(user_id, text):
     discord(f"/channels/{channel['id']}/messages", "POST", {"content": text})
 
 
-def bridged_rooms():
-    """Every room the bridge bot is in that is a channel portal or the space."""
+VIEW_CHANNEL = 0x400
+ADMINISTRATOR = 0x8
+
+
+def visible_channel_ids(member=None):
+    """Discord channel ids the given guild member may see, computed with
+    Discord's permission algorithm (base role perms, then @everyone, role and
+    member overwrites). member=None means @everyone; None is returned for
+    administrators, who see every channel."""
+    roles = {r["id"]: int(r["permissions"])
+             for r in discord(f"/guilds/{GUILD}/roles")}
+    member_roles = member["roles"] if member else []
+    base = roles.get(GUILD, 0)
+    for rid in member_roles:
+        base |= roles.get(rid, 0)
+    if base & ADMINISTRATOR:
+        return None
+    visible = set()
+    for ch in discord(f"/guilds/{GUILD}/channels"):
+        perms = base
+        ows = {o["id"]: o for o in ch.get("permission_overwrites", [])}
+        if GUILD in ows:
+            perms = perms & ~int(ows[GUILD]["deny"]) | int(ows[GUILD]["allow"])
+        allow = deny = 0
+        for rid in member_roles:
+            if rid in ows:
+                allow |= int(ows[rid]["allow"])
+                deny |= int(ows[rid]["deny"])
+        perms = perms & ~deny | allow
+        if member and member["user"]["id"] in ows:
+            o = ows[member["user"]["id"]]
+            perms = perms & ~int(o["deny"]) | int(o["allow"])
+        if perms & VIEW_CHANNEL:
+            visible.add(ch["id"])
+    return visible
+
+
+def bridged_rooms(visible):
+    """Bridged rooms (channel portals + guild/category spaces) the target
+    user may see per Discord permissions. visible is the permitted Discord
+    channel id set, or None for see-everything. Rooms without bridge info
+    state (the bridge's personal spaces) are never included."""
     rooms = []
     for room in matrix("/_matrix/client/v3/joined_rooms", token=AS_TOKEN,
                        as_user=BOT_MXID)["joined_rooms"]:
         rq = quote(room, safe="")
         try:
-            create = matrix(f"/_matrix/client/v3/rooms/{rq}/state/m.room.create",
-                            token=AS_TOKEN, as_user=BOT_MXID)
-            if create.get("type") == "m.space":
-                # Guild and category spaces carry the bridge info state event;
-                # the bridge's personal filtering and Direct Messages spaces
-                # do not, and community members must never be joined to those.
-                state = matrix(f"/_matrix/client/v3/rooms/{rq}/state",
-                               token=AS_TOKEN, as_user=BOT_MXID)
-                if any(ev.get("type") in ("m.bridge", "uk.half-shot.bridge")
-                       for ev in state):
-                    rooms.append((room, "space"))
-                continue
-            name = matrix(f"/_matrix/client/v3/rooms/{rq}/state/m.room.name",
-                          token=AS_TOKEN, as_user=BOT_MXID).get("name", "")
+            state = matrix(f"/_matrix/client/v3/rooms/{rq}/state",
+                           token=AS_TOKEN, as_user=BOT_MXID)
         except urllib.error.HTTPError:
             continue
-        if name.startswith("#"):
-            rooms.append((room, name))
+        create_type = name = cid = None
+        for ev in state:
+            if ev["type"] == "m.room.create":
+                create_type = ev["content"].get("type")
+            elif ev["type"] == "m.room.name":
+                name = ev["content"].get("name", "")
+            elif ev["type"] in ("m.bridge", "uk.half-shot.bridge") and cid is None:
+                cid = ev["content"].get("channel", {}).get("id")
+        if cid is None:
+            continue
+        if create_type == "m.space":
+            if cid == GUILD or visible is None or cid in visible:
+                rooms.append((room, "space"))
+        elif (name or "").startswith("#"):
+            if visible is None or cid in visible:
+                rooms.append((room, name))
     return rooms
 
 
@@ -164,7 +206,9 @@ def process(user):
     matrix(override, "POST", {"messages_per_second": 0, "burst_count": 0})
 
     joined = 0
-    for room, name in bridged_rooms():
+    # Only the channels this Discord member can actually see: staff get the
+    # staff rooms, everyone else gets the public ones
+    for room, name in bridged_rooms(visible_channel_ids(member)):
         rq = quote(room, safe="")
         try:
             matrix(f"/_matrix/client/v3/rooms/{rq}/invite", "POST",

@@ -38,6 +38,11 @@ REG_SECRET = os.environ.get("REGISTRATION_SHARED_SECRET", "")
 ADMIN_TOKEN = os.environ.get("ONBOARD_ADMIN_TOKEN", "")
 AS_TOKEN = os.environ.get("BRIDGE_AS_TOKEN", "")
 BOT_MXID = f"@discordbot:{DOMAIN}"
+# Discord credentials to compute channel visibility: /join accounts have no
+# Discord identity, so they only get channels @everyone can see
+DISCORD_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
+GUILD = os.environ.get("GUILD_ID", "")
+UA = "CosmosOnboarding (https://gocosmos.org, 1.0)"
 # Challenges only need to outlive their 10 minute expiry, so a per-boot
 # random key is fine (a restart just voids outstanding challenges).
 HMAC_KEY = os.environ.get("JOIN_HMAC_KEY") or secrets.token_hex(32)
@@ -160,31 +165,81 @@ def matrix(path, method="GET", body=None, token=None, as_user=None):
         return json.loads(payload) if payload else {}
 
 
-def bridged_rooms():
-    """Every room the bridge bot is in that is a channel portal or the space."""
+def discord(path):
+    req = urllib.request.Request("https://discord.com/api/v10" + path,
+                                 headers={"Authorization": "Bot " + DISCORD_TOKEN,
+                                          "User-Agent": UA})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read())
+
+
+VIEW_CHANNEL = 0x400
+ADMINISTRATOR = 0x8
+
+
+def visible_channel_ids(member=None):
+    """Discord channel ids the given guild member may see, computed with
+    Discord's permission algorithm (base role perms, then @everyone, role and
+    member overwrites). member=None means @everyone; None is returned for
+    administrators, who see every channel."""
+    roles = {r["id"]: int(r["permissions"])
+             for r in discord(f"/guilds/{GUILD}/roles")}
+    member_roles = member["roles"] if member else []
+    base = roles.get(GUILD, 0)
+    for rid in member_roles:
+        base |= roles.get(rid, 0)
+    if base & ADMINISTRATOR:
+        return None
+    visible = set()
+    for ch in discord(f"/guilds/{GUILD}/channels"):
+        perms = base
+        ows = {o["id"]: o for o in ch.get("permission_overwrites", [])}
+        if GUILD in ows:
+            perms = perms & ~int(ows[GUILD]["deny"]) | int(ows[GUILD]["allow"])
+        allow = deny = 0
+        for rid in member_roles:
+            if rid in ows:
+                allow |= int(ows[rid]["allow"])
+                deny |= int(ows[rid]["deny"])
+        perms = perms & ~deny | allow
+        if member and member["user"]["id"] in ows:
+            o = ows[member["user"]["id"]]
+            perms = perms & ~int(o["deny"]) | int(o["allow"])
+        if perms & VIEW_CHANNEL:
+            visible.add(ch["id"])
+    return visible
+
+
+def bridged_rooms(visible):
+    """Bridged rooms (channel portals + guild/category spaces) the target
+    user may see per Discord permissions. visible is the permitted Discord
+    channel id set, or None for see-everything. Rooms without bridge info
+    state (the bridge's personal spaces) are never included."""
     rooms = []
     for room in matrix("/_matrix/client/v3/joined_rooms", token=AS_TOKEN,
                        as_user=BOT_MXID)["joined_rooms"]:
         rq = quote(room, safe="")
         try:
-            create = matrix(f"/_matrix/client/v3/rooms/{rq}/state/m.room.create",
-                            token=AS_TOKEN, as_user=BOT_MXID)
-            if create.get("type") == "m.space":
-                # Guild and category spaces carry the bridge info state event;
-                # the bridge's personal filtering and Direct Messages spaces
-                # do not, and community members must never be joined to those.
-                state = matrix(f"/_matrix/client/v3/rooms/{rq}/state",
-                               token=AS_TOKEN, as_user=BOT_MXID)
-                if any(ev.get("type") in ("m.bridge", "uk.half-shot.bridge")
-                       for ev in state):
-                    rooms.append((room, "space"))
-                continue
-            name = matrix(f"/_matrix/client/v3/rooms/{rq}/state/m.room.name",
-                          token=AS_TOKEN, as_user=BOT_MXID).get("name", "")
+            state = matrix(f"/_matrix/client/v3/rooms/{rq}/state",
+                           token=AS_TOKEN, as_user=BOT_MXID)
         except urllib.error.HTTPError:
             continue
-        if name.startswith("#"):
-            rooms.append((room, name))
+        create_type = name = cid = None
+        for ev in state:
+            if ev["type"] == "m.room.create":
+                create_type = ev["content"].get("type")
+            elif ev["type"] == "m.room.name":
+                name = ev["content"].get("name", "")
+            elif ev["type"] in ("m.bridge", "uk.half-shot.bridge") and cid is None:
+                cid = ev["content"].get("channel", {}).get("id")
+        if cid is None:
+            continue
+        if create_type == "m.space":
+            if cid == GUILD or visible is None or cid in visible:
+                rooms.append((room, "space"))
+        elif (name or "").startswith("#"):
+            if visible is None or cid in visible:
+                rooms.append((room, name))
     return rooms
 
 
@@ -192,12 +247,13 @@ def auto_join(mxid, user_token):
     """Invite the account to every bridged room as the bridge bot and accept
     each invite, mirroring the Discord reaction onboarding. Runs in a
     background thread so the signup response stays instant."""
+    visible = visible_channel_ids()  # no Discord identity: @everyone only
     override = f"/_synapse/admin/v1/users/{quote(mxid, safe='')}/override_ratelimit"
     matrix(override, "POST", {"messages_per_second": 0, "burst_count": 0},
            token=ADMIN_TOKEN)
     joined = 0
     try:
-        for room, name in bridged_rooms():
+        for room, name in bridged_rooms(visible):
             rq = quote(room, safe="")
             try:
                 matrix(f"/_matrix/client/v3/rooms/{rq}/invite", "POST",
@@ -275,7 +331,8 @@ def register(body, ip):
         used_challenges[challenge] = time.time() + CHALLENGE_TTL
     mxid = f"@{username}:{DOMAIN}"
     log(f"account created: {mxid} (ip {ip})")
-    if AS_TOKEN and ADMIN_TOKEN and created.get("access_token"):
+    if (AS_TOKEN and ADMIN_TOKEN and DISCORD_TOKEN and GUILD
+            and created.get("access_token")):
         threading.Thread(target=auto_join_safe,
                          args=(mxid, created["access_token"]),
                          daemon=True).start()
@@ -341,7 +398,8 @@ if not REG_SECRET:
     while True:
         time.sleep(3600)
 
-if not (AS_TOKEN and ADMIN_TOKEN):
-    log("BRIDGE_AS_TOKEN / ONBOARD_ADMIN_TOKEN not set - auto-join disabled")
+if not (AS_TOKEN and ADMIN_TOKEN and DISCORD_TOKEN and GUILD):
+    log("BRIDGE_AS_TOKEN / ONBOARD_ADMIN_TOKEN / DISCORD_BOT_TOKEN / GUILD_ID "
+        "not all set - auto-join disabled")
 log(f"join page up on :8080 for {DOMAIN} (synapse: {SYNAPSE})")
 ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()

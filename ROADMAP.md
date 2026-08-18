@@ -109,6 +109,13 @@ _Last updated: 2026-08-18_
   as the Discord reaction flow (bridge-bot invites + accepted invites with
   the per-user ratelimit lifted, run in the background so signup stays
   instant; the registration session is logged out afterwards)
+- [x] **Auto-join respects Discord permissions**: room eligibility is computed
+  with Discord's permission algorithm (role perms + channel overwrites) via
+  the bridge info state's channel id. /join accounts get only what @everyone
+  sees; Discord-reaction onboarding computes the reacting member's own
+  visibility, so staff get staff rooms and regular members do not. The
+  test12345 account was kicked from #staff-bot-cmds and the staff only
+  space (gabolate and soultron keep them: their Discord roles grant access)
 
 ## ⏭️ Next (in order)
 
