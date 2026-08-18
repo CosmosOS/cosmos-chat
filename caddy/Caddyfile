@@ -12,6 +12,9 @@ matrix.gocosmos.org {
 
 	reverse_proxy /_matrix/* synapse:8008
 	reverse_proxy /_synapse/client/* synapse:8008
+
+	# Avatar proxy for Discord relay webhooks (bridge public_address)
+	reverse_proxy /mautrix-discord/* bridge:29334
 }
 
 chat.gocosmos.org {
