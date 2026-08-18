@@ -13,3 +13,4 @@ ssh.public
 
 # Local tooling
 .claude/
+__pycache__/
