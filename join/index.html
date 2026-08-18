@@ -16,58 +16,65 @@
 </script>
 <script async defer type="module" src="/join/altcha.js"></script>
 <style>
+  /* Palette and shapes mirror Element's compound dark theme tokens
+     (theme-bg #101317, gray-1400 #f2f5f7, gray-900 #acb4bd, pill buttons,
+     glass panel: alpha-gray-400 + 20px blur, space-9x radius) */
   :root { color-scheme: dark; }
   * { box-sizing: border-box; margin: 0; }
   body {
     font-family: Inter, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: #10131a url("/branding/welcome-bg.jpg") center / cover no-repeat fixed;
-    color: #e8eaed; min-height: 100vh; display: flex;
+    background: #101317 url("/branding/welcome-bg.jpg") center / cover no-repeat fixed;
+    color: #f2f5f7; min-height: 100vh; display: flex;
     align-items: center; justify-content: center; padding: 24px;
   }
+  .glass {
+    padding: 12px; border-radius: 36px;
+    background: rgba(225, 228, 239, .13);
+    outline: 1px solid rgba(225, 228, 239, .13); outline-offset: -1px;
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    width: 100%; max-width: 444px;
+  }
   .card {
-    background: rgba(22, 25, 31, .93); border: 1px solid #2b313b;
-    border-radius: 12px; padding: 36px 32px; width: 100%; max-width: 420px;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, .55);
+    background: #101317; border-radius: 26px;
+    padding: 40px 44px 28px;
   }
-  .logo { display: block; width: 64px; height: 64px; margin: 0 auto 16px; }
-  h1 { font-size: 22px; text-align: center; margin-bottom: 4px; }
-  .sub { color: #9aa3af; font-size: 14px; text-align: center; margin-bottom: 24px; }
-  label { display: block; font-size: 13px; color: #9aa3af; margin: 14px 0 6px; }
+  .logo { display: block; width: 56px; height: 56px; margin: 0 auto 16px; }
+  h1 { font-size: 22px; font-weight: 600; text-align: center; margin-bottom: 4px; }
+  .sub { color: #acb4bd; font-size: 14px; text-align: center; margin-bottom: 24px; }
+  label { display: block; font-size: 13px; font-weight: 500; color: #acb4bd; margin: 14px 0 6px; }
   input {
-    width: 100%; padding: 11px 12px; font-size: 15px; color: #e8eaed;
-    background: #10131a; border: 1px solid #394049; border-radius: 8px;
+    width: 100%; padding: 11px 14px; font-size: 15px; color: #f2f5f7;
+    background: #15191e; border: 1px solid #394049; border-radius: 10px;
   }
-  input:focus { outline: none; border-color: #0dbd8b; }
+  input:focus { outline: none; border-color: #f2f5f7; }
   .mxid { font-size: 12px; color: #6b7280; margin-top: 6px; min-height: 15px; }
   altcha-widget {
     display: block; margin-top: 18px;
-    --altcha-color-base: #10131a; --altcha-color-text: #e8eaed;
-    --altcha-color-border: #394049; --altcha-border-radius: 8px;
+    --altcha-color-base: #15191e; --altcha-color-text: #f2f5f7;
+    --altcha-color-border: #394049; --altcha-border-radius: 10px;
     --altcha-max-width: 100%;
   }
-  button {
-    width: 100%; margin-top: 18px; padding: 12px; font-size: 15px;
-    font-weight: 600; color: #fff; background: #0dbd8b; border: none;
-    border-radius: 8px; cursor: pointer;
+  button, .btn {
+    display: block; width: 100%; margin-top: 18px; padding: 12px;
+    font: inherit; font-size: 15px; font-weight: 600; text-align: center;
+    text-decoration: none; color: #101317; background: #f2f5f7;
+    border: none; border-radius: 9999px; cursor: pointer;
+    transition: background-color .1s;
   }
-  button:hover { background: #0aa87c; }
-  button:disabled { background: #2b313b; color: #6b7280; cursor: default; }
+  button:hover, .btn:hover { background: #dee3e8; }
+  button:disabled { background: #21262c; color: #6b7280; cursor: default; }
   .msg { margin-top: 14px; font-size: 14px; display: none; }
   .msg.error { display: block; color: #f28b82; }
-  .foot { margin-top: 22px; font-size: 13px; color: #9aa3af; text-align: center; }
-  a { color: #0dbd8b; text-decoration: none; }
+  .foot { margin-top: 22px; font-size: 13px; color: #acb4bd; text-align: center; }
+  a { color: #f2f5f7; }
   .hp { position: absolute; left: -9999px; }
   .success { text-align: center; display: none; }
   .success h1 { margin-bottom: 12px; }
-  .success p { color: #9aa3af; font-size: 14px; margin-bottom: 22px; }
-  .success a.go {
-    display: inline-block; padding: 12px 28px; background: #0dbd8b;
-    color: #fff; font-weight: 600; border-radius: 8px;
-  }
+  .success p { color: #acb4bd; font-size: 14px; margin-bottom: 22px; }
 </style>
 </head>
 <body>
-<div class="card">
+<div class="glass"><div class="card">
   <form id="form">
     <img class="logo" src="/branding/icon.png" alt="Cosmos">
     <h1>Join Cosmos Chat</h1>
@@ -96,9 +103,9 @@
     <img class="logo" src="/branding/icon.png" alt="Cosmos">
     <h1>Account created 🎉</h1>
     <p id="created-as"></p>
-    <a class="go" href="https://chat.gocosmos.org">Open Cosmos Chat</a>
+    <a class="btn" href="https://chat.gocosmos.org">Open Cosmos Chat</a>
   </div>
-</div>
+</div></div>
 
 <script>
   const form = document.getElementById("form");

@@ -166,10 +166,13 @@ Example service block (pattern applied to all):
   https://chat.gocosmos.org/join: ALTCHA proof-of-work captcha, FOSS with
   zero third-party calls since Synapse itself only supports Google reCAPTCHA,
   plus honeypot and per-IP rate limits, shared-secret admin endpoint on the
-  internal network) and by the Discord onboarding daemon (admin API). On the
-  client side Element's register screen and Create account buttons are
-  removed (`UIFeature.registration: false`) and the custom welcome screen
-  links Create account to /join.
+  internal network) and by the Discord onboarding daemon (admin API). Element
+  renders its stock native screens; the served app shell is patched at the
+  proxy (`scripts/patch-element-index.sh`, regenerated from the running image
+  on every deploy): the `#/register` route redirects to /join, and Google's
+  recaptcha hosts are stripped from Element's CSP so the browser refuses
+  those origins outright (we never use reCAPTCHA; ALTCHA on /join is the
+  only captcha).
 - `allow_guest_access: false`
 - `password_config.policy`: enabled, min length 12.
 - `url_preview_enabled: false` (kills the classic SSRF vector; if ever enabled,

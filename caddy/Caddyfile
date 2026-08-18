@@ -51,6 +51,16 @@ chat.gocosmos.org {
 		root * /srv/cosmos-icons
 		file_server
 	}
+	# Patched Element shell (regenerated each deploy, see
+	# scripts/patch-element-index.sh): the #/register route redirects to the
+	# ALTCHA signup page and Google's recaptcha hosts are stripped from the
+	# CSP so the browser refuses those origins outright
+	@appShell path / /index.html
+	handle @appShell {
+		root * /srv/cosmos-icons
+		rewrite * /element-index.html
+		file_server
+	}
 	# Public registration page (ALTCHA proof-of-work captcha, see join/)
 	handle /join* {
 		reverse_proxy join:8080

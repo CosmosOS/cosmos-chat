@@ -94,6 +94,17 @@ _Last updated: 2026-08-18_
 - [x] CI deploy refreshes bind-mounted configs: recreates the light services
   (element, join, onboarding) and gracefully reloads Caddy on every push, so
   config-only changes actually reach the running containers
+- [x] Native Element welcome restored (the sanitized embedded welcome page
+  rendered unstyled: Element 1.12 strips style blocks and classes and forces
+  links into new tabs, so custom embedded pages cannot look native)
+- [x] **App shell patched at the proxy** (`scripts/patch-element-index.sh`,
+  regenerated from the running image on every deploy): Element's native
+  Create account buttons and the `#/register` route now land on the ALTCHA
+  /join page, and Google's recaptcha hosts are stripped from Element's CSP,
+  so the browser itself refuses those origins and ALTCHA is provably the
+  only captcha in the flow
+- [x] /join page restyled with Element's compound design tokens (glass panel,
+  pill buttons, dark palette) so signup matches the app pixel for pixel
 
 ## ⏭️ Next (in order)
 

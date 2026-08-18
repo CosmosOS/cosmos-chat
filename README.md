@@ -86,9 +86,11 @@ Two doors, both self-hosted, no Google services involved:
 
 Every other surface is closed: the raw client registration API is disabled
 (`enable_registration: false`; both doors above use internal admin endpoints,
-which keep working), and Element's `#/register` screen and Create account
-buttons are removed (`UIFeature.registration: false`). The custom welcome
-screen's Create account button links to `/join`.
+which keep working). Element keeps its native UI, but the served app shell is
+patched (`scripts/patch-element-index.sh`): every Create account button and
+the `#/register` route land on `/join`, and Google's recaptcha hosts are
+stripped from the CSP, so the ALTCHA page is the only captcha that can ever
+run in a visitor's browser.
 
 ## Repo layout
 

@@ -34,6 +34,11 @@ jobs:
             # config edits need a manual refresh (git replaces file inodes).
             # Light stateless services are recreated, Caddy reloads gracefully.
             docker compose up -d --force-recreate --no-deps element join onboarding
+            # regenerate the patched app shell from the running image so an
+            # Element upgrade can never drift from the served index.html
+            docker compose exec -T element cat /app/index.html \
+              | ./scripts/patch-element-index.sh > caddy/assets/element-index.html
+            grep -q register-redirect.js caddy/assets/element-index.html
             if [ -n "$(docker compose ps -q caddy)" ]; then
               docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
             fi
