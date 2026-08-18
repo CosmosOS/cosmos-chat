@@ -11,6 +11,7 @@ volumes:
   pgdata:
   synapse-data:
   bridge-data:
+  onboarding-data:
 
 x-hardening: &hardening
   restart: unless-stopped
@@ -117,6 +118,28 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  onboarding:
+    <<: *hardening
+    image: python:3.13-slim@sha256:ffb752e139c0a19692a43af8d8523b274222dd68eebad5d583b45c2201c6e30a
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
+    command: ["python", "-u", "/app/onboard.py"]
+    environment:
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      ONBOARD_ADMIN_TOKEN: ${ONBOARD_ADMIN_TOKEN:-}
+      BRIDGE_AS_TOKEN: ${BRIDGE_AS_TOKEN:-}
+      GUILD_ID: ${GUILD_ID:-}
+      ONBOARD_WATCH: ${ONBOARD_WATCH:-}
+    volumes:
+      - ./onboarding/onboard.py:/app/onboard.py:ro
+      - onboarding-data:/state
+    networks: [frontend]
+    mem_limit: 256m
+    pids_limit: 64
+    depends_on:
+      - synapse
 
   bridge:
     <<: *hardening
