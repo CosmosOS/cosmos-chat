@@ -45,6 +45,12 @@ chat.gocosmos.org {
 		rewrite * /icon.png
 		file_server
 	}
+	# Self-hosted branding assets (login background, see element/config.json)
+	handle /branding/* {
+		uri strip_prefix /branding
+		root * /srv/cosmos-icons
+		file_server
+	}
 	handle {
 		reverse_proxy element:80
 	}

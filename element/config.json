@@ -6,6 +6,9 @@
     }
   },
   "brand": "Cosmos Chat",
+  "branding": {
+    "welcome_background_url": "/branding/welcome-bg.jpg"
+  },
   "default_theme": "dark",
   "disable_guests": true,
   "disable_custom_urls": true,
