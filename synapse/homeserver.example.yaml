@@ -42,9 +42,10 @@ rc_joins:
     per_second: 5
     burst_count: 60
 
-# Invite-token registration: no open signup, admins mint tokens
-enable_registration: true
-registration_requires_token: true
+# Raw client registration API fully closed: signup happens only through the
+# /join page and the Discord onboarding daemon, which use the shared-secret
+# and admin endpoints (both keep working with this off)
+enable_registration: false
 allow_guest_access: false
 
 password_config:

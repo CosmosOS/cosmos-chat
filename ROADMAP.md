@@ -85,6 +85,15 @@ _Last updated: 2026-08-18_
   per-IP and global rate limits, single-use signed challenges); accounts are
   created via Synapse's shared-secret endpoint while the raw client API stays
   invite-token gated
+- [x] **Register attack surface closed**: raw client registration API disabled
+  (`enable_registration: false`; the join page and onboarding daemon use
+  internal admin endpoints and keep working), Element's `#/register` screen
+  and Create account buttons removed (`UIFeature.registration: false`),
+  custom Cosmos welcome screen whose Create account button links to /join,
+  and /join redirects already-signed-in visitors to the app
+- [x] CI deploy refreshes bind-mounted configs: recreates the light services
+  (element, join, onboarding) and gracefully reloads Caddy on every push, so
+  config-only changes actually reach the running containers
 
 ## ⏭️ Next (in order)
 

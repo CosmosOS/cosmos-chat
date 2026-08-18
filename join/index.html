@@ -5,6 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Join Cosmos Chat</title>
 <link rel="icon" href="/favicon.ico">
+<script>
+  // Element keeps its session in localStorage on this same origin:
+  // already signed in means straight to the app, no signup form
+  try {
+    if (localStorage.getItem("mx_has_access_token") === "true"
+        || localStorage.getItem("mx_access_token")
+        || localStorage.getItem("mx_user_id")) location.replace("/");
+  } catch (e) {}
+</script>
 <script async defer type="module" src="/join/altcha.js"></script>
 <style>
   :root { color-scheme: dark; }

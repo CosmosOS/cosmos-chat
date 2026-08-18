@@ -73,19 +73,22 @@ docker compose exec synapse register_new_matrix_user \
 
 ## Registration
 
-Three doors, no Google services involved:
+Two doors, both self-hosted, no Google services involved:
 
 - **https://chat.gocosmos.org/join**: the public signup link (shared from
   gocosmos.org). Protected by [ALTCHA](https://altcha.org), a FOSS
   proof-of-work captcha served entirely from our own stack (widget vendored
   in `join/altcha.js`, MIT), plus a honeypot field and per-IP rate limits.
-  Accounts are created through Synapse's shared-secret endpoint.
+  Accounts are created through Synapse's shared-secret endpoint; visitors
+  already signed in are redirected to the app.
 - **Discord reaction**: reacting ✅ on the watched announcement message
   auto-creates a mirrored account (see `onboarding/onboard.py`).
-- **Element's own register screen** stays invite-token gated
-  (`registration_requires_token`), so bots hitting the raw client API get
-  nothing; admins can still mint tokens via the admin API over an SSH tunnel
-  (`ssh -L 8008:localhost:8008 <vps>`).
+
+Every other surface is closed: the raw client registration API is disabled
+(`enable_registration: false`; both doors above use internal admin endpoints,
+which keep working), and Element's `#/register` screen and Create account
+buttons are removed (`UIFeature.registration: false`). The custom welcome
+screen's Create account button links to `/join`.
 
 ## Repo layout
 

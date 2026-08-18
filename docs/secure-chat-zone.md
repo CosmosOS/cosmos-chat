@@ -160,14 +160,16 @@ Example service block (pattern applied to all):
 ### Synapse (`homeserver.yaml`)
 
 - `server_name: gocosmos.org`, `public_baseurl: https://matrix.gocosmos.org/`
-- **Registration**: `enable_registration: true` + `registration_requires_token: true`;
-  the raw client API always demands an invite token, so bots probing
-  `/register` get nothing. Public signup happens on the self-hosted join page
-  (`join/join.py`, https://chat.gocosmos.org/join): an ALTCHA proof-of-work
-  captcha (FOSS, zero third-party calls; Synapse itself only supports Google
-  reCAPTCHA, which we refuse) plus honeypot and per-IP rate limits, then the
-  account is created via the shared-secret admin endpoint on the internal
-  network.
+- **Registration**: `enable_registration: false`; the raw client API refuses
+  every signup, so bots and scrapers probing `/register` hit a wall. Accounts
+  are created only by the self-hosted join page (`join/join.py`,
+  https://chat.gocosmos.org/join: ALTCHA proof-of-work captcha, FOSS with
+  zero third-party calls since Synapse itself only supports Google reCAPTCHA,
+  plus honeypot and per-IP rate limits, shared-secret admin endpoint on the
+  internal network) and by the Discord onboarding daemon (admin API). On the
+  client side Element's register screen and Create account buttons are
+  removed (`UIFeature.registration: false`) and the custom welcome screen
+  links Create account to /join.
 - `allow_guest_access: false`
 - `password_config.policy`: enabled, min length 12.
 - `url_preview_enabled: false` (kills the classic SSRF vector; if ever enabled,
