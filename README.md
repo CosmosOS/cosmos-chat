@@ -79,8 +79,9 @@ Two doors, both self-hosted, no Google services involved:
   gocosmos.org). Protected by [ALTCHA](https://altcha.org), a FOSS
   proof-of-work captcha served entirely from our own stack (widget vendored
   in `join/altcha.js`, MIT), plus a honeypot field and per-IP rate limits.
-  Accounts are created through Synapse's shared-secret endpoint; visitors
-  already signed in are redirected to the app.
+  Accounts are created through Synapse's shared-secret endpoint and
+  auto-joined to every bridged channel and the space (same flow as the
+  Discord door); visitors already signed in are redirected to the app.
 - **Discord reaction**: reacting ✅ on the watched announcement message
   auto-creates a mirrored account (see `onboarding/onboard.py`).
 

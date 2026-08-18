@@ -105,6 +105,10 @@ _Last updated: 2026-08-18_
   only captcha in the flow
 - [x] /join page restyled with Element's compound design tokens (glass panel,
   pill buttons, dark palette) so signup matches the app pixel for pixel
+- [x] /join accounts auto-joined to every bridged channel + the space, same
+  as the Discord reaction flow (bridge-bot invites + accepted invites with
+  the per-user ratelimit lifted, run in the background so signup stays
+  instant; the registration session is logged out afterwards)
 
 ## ⏭️ Next (in order)
 

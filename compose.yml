@@ -153,6 +153,9 @@ services:
     command: ["python", "-u", "/app/join.py"]
     environment:
       REGISTRATION_SHARED_SECRET: ${REGISTRATION_SHARED_SECRET:-}
+      # auto-join new accounts to every bridged room (same tokens as onboarding)
+      ONBOARD_ADMIN_TOKEN: ${ONBOARD_ADMIN_TOKEN:-}
+      BRIDGE_AS_TOKEN: ${BRIDGE_AS_TOKEN:-}
     volumes:
       - ./join:/app:ro
     networks: [frontend]

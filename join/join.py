@@ -28,11 +28,16 @@ import urllib.error
 import urllib.request
 from base64 import b64decode
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote
 
 SYNAPSE = os.environ.get("SYNAPSE_URL", "http://synapse:8008")
 DOMAIN = os.environ.get("MATRIX_DOMAIN", "gocosmos.org")
 REG_SECRET = os.environ.get("REGISTRATION_SHARED_SECRET", "")
+# Same tokens the onboarding daemon uses: the bridge bot invites the new
+# account into every bridged room and the admin API lifts the join ratelimit
+ADMIN_TOKEN = os.environ.get("ONBOARD_ADMIN_TOKEN", "")
+AS_TOKEN = os.environ.get("BRIDGE_AS_TOKEN", "")
+BOT_MXID = f"@discordbot:{DOMAIN}"
 # Challenges only need to outlive their 10 minute expiry, so a per-boot
 # random key is fine (a restart just voids outstanding challenges).
 HMAC_KEY = os.environ.get("JOIN_HMAC_KEY") or secrets.token_hex(32)
@@ -120,7 +125,10 @@ def verify_captcha(payload_b64):
 
 
 def synapse_register(username, password):
-    """Shared-secret registration (/_synapse/admin/v1/register)."""
+    """Shared-secret registration (/_synapse/admin/v1/register).
+
+    Returns the response, which includes an access token for the new user.
+    """
     def call(method, body=None):
         data = json.dumps(body).encode() if body else None
         req = urllib.request.Request(SYNAPSE + "/_synapse/admin/v1/register",
@@ -134,8 +142,96 @@ def synapse_register(username, password):
                    b"\0".join([nonce.encode(), username.encode(),
                                password.encode(), b"notadmin"]),
                    hashlib.sha1).hexdigest()
-    call("POST", {"nonce": nonce, "username": username, "password": password,
-                  "admin": False, "mac": mac})
+    return call("POST", {"nonce": nonce, "username": username,
+                         "password": password, "admin": False, "mac": mac})
+
+
+def matrix(path, method="GET", body=None, token=None, as_user=None):
+    # as_user: appservice impersonation; the registration's sender_localpart is
+    # a random user, so acting as the bridge bot needs an explicit user_id.
+    if as_user:
+        path += ("&" if "?" in path else "?") + "user_id=" + quote(as_user, safe="")
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(SYNAPSE + path, data=data, method=method,
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": "Bearer " + token})
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        payload = resp.read()
+        return json.loads(payload) if payload else {}
+
+
+def bridged_rooms():
+    """Every room the bridge bot is in that is a channel portal or the space."""
+    rooms = []
+    for room in matrix("/_matrix/client/v3/joined_rooms", token=AS_TOKEN,
+                       as_user=BOT_MXID)["joined_rooms"]:
+        rq = quote(room, safe="")
+        try:
+            create = matrix(f"/_matrix/client/v3/rooms/{rq}/state/m.room.create",
+                            token=AS_TOKEN, as_user=BOT_MXID)
+            if create.get("type") == "m.space":
+                rooms.append((room, "space"))
+                continue
+            name = matrix(f"/_matrix/client/v3/rooms/{rq}/state/m.room.name",
+                          token=AS_TOKEN, as_user=BOT_MXID).get("name", "")
+        except urllib.error.HTTPError:
+            continue
+        if name.startswith("#"):
+            rooms.append((room, name))
+    return rooms
+
+
+def auto_join(mxid, user_token):
+    """Invite the account to every bridged room as the bridge bot and accept
+    each invite, mirroring the Discord reaction onboarding. Runs in a
+    background thread so the signup response stays instant."""
+    override = f"/_synapse/admin/v1/users/{quote(mxid, safe='')}/override_ratelimit"
+    matrix(override, "POST", {"messages_per_second": 0, "burst_count": 0},
+           token=ADMIN_TOKEN)
+    joined = 0
+    try:
+        for room, name in bridged_rooms():
+            rq = quote(room, safe="")
+            try:
+                matrix(f"/_matrix/client/v3/rooms/{rq}/invite", "POST",
+                       {"user_id": mxid}, token=AS_TOKEN, as_user=BOT_MXID)
+            except urllib.error.HTTPError as e:
+                log("invite failed:", name, e.code)
+            for _ in range(6):
+                try:
+                    matrix(f"/_matrix/client/v3/rooms/{rq}/join", "POST", {},
+                           token=user_token)
+                    joined += 1
+                    break
+                except urllib.error.HTTPError as e:
+                    if e.code == 429:
+                        try:
+                            wait = json.loads(e.read()).get("retry_after_ms", 2000) / 1000
+                        except Exception:
+                            wait = 2
+                        time.sleep(min(wait + 0.1, 15))
+                        continue
+                    log("join failed:", name, e.code)
+                    break
+            else:
+                log("join gave up after retries:", name)
+    finally:
+        try:
+            matrix(override, "DELETE", token=ADMIN_TOKEN)
+        except Exception as e:
+            log("ratelimit override cleanup failed:", repr(e))
+        try:  # drop the registration session; the user logs in on their own
+            matrix("/_matrix/client/v3/logout", "POST", {}, token=user_token)
+        except Exception:
+            pass
+    log(f"{mxid} auto-joined {joined} bridged rooms")
+
+
+def auto_join_safe(mxid, user_token):
+    try:
+        auto_join(mxid, user_token)
+    except Exception as e:
+        log("ERROR auto-joining", mxid, repr(e))
 
 
 def register(body, ip):
@@ -158,7 +254,7 @@ def register(body, ip):
     if not allowed("created", ip):
         return 429, "Too many accounts created recently. Try again later."
     try:
-        synapse_register(username, password)
+        created = synapse_register(username, password)
     except urllib.error.HTTPError as e:
         try:
             err = json.loads(e.read())
@@ -170,7 +266,12 @@ def register(body, ip):
         return 502, err.get("error") or "Account creation failed. Try again later."
     with lock:
         used_challenges[challenge] = time.time() + CHALLENGE_TTL
-    log(f"account created: @{username}:{DOMAIN} (ip {ip})")
+    mxid = f"@{username}:{DOMAIN}"
+    log(f"account created: {mxid} (ip {ip})")
+    if AS_TOKEN and ADMIN_TOKEN and created.get("access_token"):
+        threading.Thread(target=auto_join_safe,
+                         args=(mxid, created["access_token"]),
+                         daemon=True).start()
     return 200, None
 
 
@@ -233,5 +334,7 @@ if not REG_SECRET:
     while True:
         time.sleep(3600)
 
+if not (AS_TOKEN and ADMIN_TOKEN):
+    log("BRIDGE_AS_TOKEN / ONBOARD_ADMIN_TOKEN not set - auto-join disabled")
 log(f"join page up on :8080 for {DOMAIN} (synapse: {SYNAPSE})")
 ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
