@@ -170,7 +170,14 @@ def bridged_rooms():
             create = matrix(f"/_matrix/client/v3/rooms/{rq}/state/m.room.create",
                             token=AS_TOKEN, as_user=BOT_MXID)
             if create.get("type") == "m.space":
-                rooms.append((room, "space"))
+                # Guild and category spaces carry the bridge info state event;
+                # the bridge's personal filtering and Direct Messages spaces
+                # do not, and community members must never be joined to those.
+                state = matrix(f"/_matrix/client/v3/rooms/{rq}/state",
+                               token=AS_TOKEN, as_user=BOT_MXID)
+                if any(ev.get("type") in ("m.bridge", "uk.half-shot.bridge")
+                       for ev in state):
+                    rooms.append((room, "space"))
                 continue
             name = matrix(f"/_matrix/client/v3/rooms/{rq}/state/m.room.name",
                           token=AS_TOKEN, as_user=BOT_MXID).get("name", "")
