@@ -152,6 +152,11 @@
     msg.className = "msg error";
     btn.disabled = false;
     btn.textContent = "Create account";
+    // every attempt consumes the solved challenge server-side, so make the
+    // widget match: uncheck and require a fresh manual verification. The v2
+    // widget resets on its form's reset event; dispatching it (instead of
+    // form.reset()) keeps the typed username and password intact.
+    form.dispatchEvent(new Event("reset"));
   });
 </script>
 </body>

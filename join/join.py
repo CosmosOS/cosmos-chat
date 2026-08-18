@@ -314,6 +314,10 @@ def register(body, ip):
     if not challenge:
         return 400, ("Anti-bot check failed or expired. Reload the page "
                      "and try again.")
+    # One attempt per solved challenge, success or not: a taken username
+    # means solving the proof of work again (the page resets the widget)
+    with lock:
+        used_challenges[challenge] = time.time() + CHALLENGE_TTL
     if not allowed("created", ip):
         return 429, "Too many accounts created recently. Try again later."
     try:
@@ -327,8 +331,6 @@ def register(body, ip):
             return 400, "This username is already taken."
         log("synapse register error:", e.code, err)
         return 502, err.get("error") or "Account creation failed. Try again later."
-    with lock:
-        used_challenges[challenge] = time.time() + CHALLENGE_TTL
     mxid = f"@{username}:{DOMAIN}"
     log(f"account created: {mxid} (ip {ip})")
     if (AS_TOKEN and ADMIN_TOKEN and DISCORD_TOKEN and GUILD
