@@ -3,7 +3,7 @@
 Status tracker for the Matrix/Element chat zone. Architecture and security
 details live in [docs/secure-chat-zone.md](docs/secure-chat-zone.md).
 
-_Last updated: 2026-08-15_
+_Last updated: 2026-08-18_
 
 ## ✅ Done
 
@@ -52,22 +52,19 @@ _Last updated: 2026-08-15_
   git reset + compose up + health check); Caddy gated behind the `public` compose
   profile until DNS exists
 - [x] Dyno's Autoban module re-enabled on CosmosOS
-
-## 🔴 Blocked: needs action in external panels (Valentin)
-
-- [ ] **Add DNS records for gocosmos.org:**
-  ```
-  matrix.gocosmos.org   A     <VPS_IPV4>
-  matrix.gocosmos.org   AAAA  <VPS_IPV6>
-  chat.gocosmos.org     A     <VPS_IPV4>
-  chat.gocosmos.org     AAAA  <VPS_IPV6>
-  ```
+- [x] DNS A records for matrix.gocosmos.org and chat.gocosmos.org live
+  (verified on the public resolvers and the authoritative a2dns servers)
+- [x] **Caddy live**: `COMPOSE_PROFILES=public` set in the VPS `.env`,
+  Let's Encrypt certificates obtained for both domains (needed
+  `cap_add: NET_BIND_SERVICE`; the caddy binary's file capabilities make
+  exec fail under no-new-privileges + cap_drop ALL)
+- [x] TLS verified from outside: Element 200, Synapse client API 200,
+  `/_synapse/admin` blocked with 403, `.well-known` served
+- [x] **Federation validated**: federationtester.matrix.org reports
+  AllChecksOK + valid certificates for `gocosmos.org`
 
 ## ⏭️ Next (in order)
 
-- [ ] Once DNS resolves: set `COMPOSE_PROFILES=public` in the VPS `.env`,
-  deploy, verify TLS on both domains
-- [ ] Validate federation via federationtester.matrix.org for `gocosmos.org`
 - [ ] Log in at chat.gocosmos.org (admin account + invite token ready)
 - [ ] Enable relay webhooks (`!discord set-relay --create`) in the channels
   that should be two-way (done: #staff-bot-cmds); leave announcement and
@@ -80,5 +77,6 @@ _Last updated: 2026-08-15_
 
 ## 💤 Later / nice to have
 
+- [ ] AAAA records for matrix/chat (only A records exist; the VPS has IPv6)
 - [ ] Prometheus/Grafana monitoring for Synapse
 - [ ] coturn for voice/video calls
