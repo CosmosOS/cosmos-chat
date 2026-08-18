@@ -9,9 +9,6 @@
   "branding": {
     "welcome_background_url": "/branding/welcome-bg.jpg"
   },
-  "embedded_pages": {
-    "welcome_url": "https://chat.gocosmos.org/branding/welcome.html"
-  },
   "setting_defaults": {
     "UIFeature.registration": false
   },
