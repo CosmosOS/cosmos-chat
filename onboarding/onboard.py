@@ -62,7 +62,14 @@ def discord(path, method="GET", body=None):
                 {"Authorization": "Bot " + DISCORD_TOKEN})
 
 
-def matrix(path, method="GET", body=None, token=None):
+BOT_MXID = f"@discordbot:{DOMAIN}"
+
+
+def matrix(path, method="GET", body=None, token=None, as_user=None):
+    # as_user: appservice impersonation; the registration's sender_localpart is
+    # a random user, so acting as the bridge bot needs an explicit user_id.
+    if as_user:
+        path += ("&" if "?" in path else "?") + "user_id=" + quote(as_user, safe="")
     return http(SYNAPSE + path, method, body,
                 {"Authorization": "Bearer " + (token or ADMIN_TOKEN)})
 
@@ -90,14 +97,17 @@ def dm(user_id, text):
 def bridged_rooms():
     """Every room the bridge bot is in that is a channel portal or the space."""
     rooms = []
-    for room in matrix("/_matrix/client/v3/joined_rooms", token=AS_TOKEN)["joined_rooms"]:
+    for room in matrix("/_matrix/client/v3/joined_rooms", token=AS_TOKEN,
+                       as_user=BOT_MXID)["joined_rooms"]:
         rq = quote(room, safe="")
         try:
-            create = matrix(f"/_matrix/client/v3/rooms/{rq}/state/m.room.create", token=AS_TOKEN)
+            create = matrix(f"/_matrix/client/v3/rooms/{rq}/state/m.room.create",
+                            token=AS_TOKEN, as_user=BOT_MXID)
             if create.get("type") == "m.space":
                 rooms.append((room, "space"))
                 continue
-            name = matrix(f"/_matrix/client/v3/rooms/{rq}/state/m.room.name", token=AS_TOKEN).get("name", "")
+            name = matrix(f"/_matrix/client/v3/rooms/{rq}/state/m.room.name",
+                          token=AS_TOKEN, as_user=BOT_MXID).get("name", "")
         except urllib.error.HTTPError:
             continue
         if name.startswith("#"):
@@ -147,7 +157,7 @@ def process(user):
         rq = quote(room, safe="")
         try:
             matrix(f"/_matrix/client/v3/rooms/{rq}/invite", "POST",
-                   {"user_id": mxid}, token=AS_TOKEN)
+                   {"user_id": mxid}, token=AS_TOKEN, as_user=BOT_MXID)
         except urllib.error.HTTPError as e:
             log("invite failed:", name, e.code)
         try:
