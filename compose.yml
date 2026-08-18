@@ -28,6 +28,9 @@ services:
     profiles: [public]
     image: caddy:2@sha256:df7f1c2fb114453b951de51a98efc010db1655a92c2e86be6706714e2417a78d
     cap_drop: [ALL]
+    # The caddy binary ships with file capabilities (cap_net_bind_service);
+    # under no-new-privileges exec fails unless that cap is in the permitted set.
+    cap_add: [NET_BIND_SERVICE]
     read_only: true
     tmpfs: [/tmp]
     ports:
