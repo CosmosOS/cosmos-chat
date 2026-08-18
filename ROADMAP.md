@@ -73,6 +73,12 @@ _Last updated: 2026-08-18_
   on Discord now show the sender's name and picture (no automatic
   username-matching in mautrix: dual-account users either set a Matrix
   avatar or `login-qr` with their own Discord account for native identity)
+- [x] **Onboarding daemon** (`onboarding/onboard.py`, hardened container in the
+  stack): reacting ✅ on a watched Discord message auto-creates a Matrix
+  account with the Discord username, displayname and avatar, auto-joins it to
+  every bridged channel + the space (appservice impersonation for invites,
+  per-user ratelimit override for the join burst, local `rc_joins` raised),
+  and DMs the credentials; verified end-to-end with a real user (42 rooms)
 
 ## ⏭️ Next (in order)
 
