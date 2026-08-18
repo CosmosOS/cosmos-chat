@@ -26,5 +26,20 @@ chat.gocosmos.org {
 		Content-Security-Policy "frame-ancestors 'none'"
 		Referrer-Policy strict-origin-when-cross-origin
 	}
-	reverse_proxy element:80
+
+	# Serve the Cosmos icon instead of Element's branding; matching every
+	# icon path keeps this working across Element upgrades (hashed filenames)
+	handle /vector-icons/* {
+		root * /srv/cosmos-icons
+		rewrite * /icon.png
+		file_server
+	}
+	handle /favicon.ico {
+		root * /srv/cosmos-icons
+		rewrite * /icon.png
+		file_server
+	}
+	handle {
+		reverse_proxy element:80
+	}
 }

@@ -41,6 +41,7 @@ services:
       ACME_EMAIL: ${ACME_EMAIL}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/assets:/srv/cosmos-icons:ro
       - caddy-data:/data
       - caddy-config:/config
     networks: [frontend]
