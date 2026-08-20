@@ -128,6 +128,12 @@ _Last updated: 2026-08-20_
   a relay webhook there would let Matrix users bypass Discord's send
   restrictions, since webhooks can post regardless of channel permissions
 
+- [x] CosmosOS space categories ordered for all members (an `order` field on
+  each `m.space.child` state event in the guild space, set as the bridge
+  bot): Info, Off Topic, Cosmos, Cosmos Development, Gen3 Development,
+  Voice Channels, staff only, Archived. Room state, so current and future
+  members all see the same sidebar order
+
 ## ⏭️ Next (in order)
 
 - [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org
