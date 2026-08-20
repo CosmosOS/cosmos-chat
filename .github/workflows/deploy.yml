@@ -3,6 +3,12 @@ name: Deploy
 on:
   push:
     branches: [main]
+    # docs-only commits don't need a deploy; the VPS checkout catches up on
+    # the next real one (nothing in these paths is mounted into containers)
+    paths-ignore:
+      - "**/README.md"
+      - "ROADMAP.md"
+      - "docs/**"
   workflow_dispatch:
 
 concurrency:
