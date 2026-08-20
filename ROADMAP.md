@@ -154,6 +154,13 @@ _Last updated: 2026-08-20_
   allowed. Note: staff who get a Matrix account or the role later need a
   PL 50 grant in these two rooms, it is not automatic
 
+- [x] Mobile browsers stay on the web app: Element hard-redirects mobile
+  user agents to /mobile_guide ("install Element X") and ignores
+  `mobile_guide_toast: false` there (open bug element-web#21616), so Caddy
+  now 302s /mobile_guide* back to /#/welcome (Element skips the mobile
+  redirect when a fragment is present, so no loop) and the toast is
+  disabled in config.json
+
 ## ⏭️ Next (in order)
 
 - [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org
