@@ -65,6 +65,13 @@ chat.gocosmos.org {
 	handle /join* {
 		reverse_proxy join:8080
 	}
+	# Element hard-redirects mobile browsers to an "install Element X" guide
+	# and ignores mobile_guide_toast (element-web#21616); bounce it back into
+	# the app. The fragment matters: with a fragment present Element skips
+	# the mobile redirect, so this cannot loop
+	handle /mobile_guide* {
+		redir * "/#/welcome" 302
+	}
 	handle {
 		reverse_proxy element:80
 	}

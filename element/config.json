@@ -12,5 +12,6 @@
   "default_theme": "dark",
   "disable_guests": true,
   "disable_custom_urls": true,
-  "show_labs_settings": false
+  "show_labs_settings": false,
+  "mobile_guide_toast": false
 }
