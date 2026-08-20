@@ -51,10 +51,6 @@
     cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
   }
   .server-name svg { width: 15px; height: 15px; color: #acb4bd; }
-  .copied {
-    font-size: 13px; color: #0dbd8b; margin-left: 4px;
-    opacity: 0; transition: opacity .2s;
-  }
   a { color: #f2f5f7; }
   hr { border: 0; border-top: 1px solid #21262c; margin: 28px 0 4px; }
   .btn {
@@ -91,7 +87,6 @@
             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
           </svg>
         </button>
-        <span class="copied" id="copied">Copied!</span>
       </p>
 
       <div class="app">
@@ -145,13 +140,8 @@
   });
 
   document.getElementById("copy-server").addEventListener("click", function () {
-    var done = function () {
-      var c = document.getElementById("copied");
-      c.style.opacity = "1";
-      setTimeout(function () { c.style.opacity = "0"; }, 1500);
-    };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText("gocosmos.org").then(done, done);
+      navigator.clipboard.writeText("gocosmos.org");
     } else {
       var t = document.createElement("textarea");
       t.value = "gocosmos.org";
@@ -159,7 +149,6 @@
       t.select();
       try { document.execCommand("copy"); } catch (e) {}
       document.body.removeChild(t);
-      done();
     }
   });
 </script>
