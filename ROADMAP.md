@@ -139,7 +139,20 @@ _Last updated: 2026-08-20_
   was added on Discord, then `!discord set-relay --create` succeeded, so
   every writable channel is now two-way
 
-## ⏭️ Next (in order)
+- [x] **#rules and #cosmos-announcements read-only on Matrix, like Discord**:
+  portal power levels raised to `events_default: 50` (posting needs PL 50)
+  while reactions and own-message redactions stay at 0, so everyone reads
+  and reacts but only staff post. PL 50 granted to the admin/coredev
+  members' Discord puppets (their Discord posts keep bridging in), to
+  their existing Matrix accounts (valentinbreiz, soultron17, zarlo), to
+  the Dyno bot's puppet and to @cosmosbridge. Since posting is now
+  staff-gated on Matrix too, the webhook bypass concern no longer applies
+  and both channels got relay webhooks (needed a Manage Webhooks allow
+  for the cosmos.bridge role on #rules, same fix as #cosmos-general), so
+  staff announcements posted from Matrix reach Discord. Verified with a
+  regular account: posting rejected, reacting and removing the reaction
+  allowed. Note: staff who get a Matrix account or the role later need a
+  PL 50 grant in these two rooms, it is not automatic
 
 - [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org
 - [ ] Backups: restic (pg_dump + signing key + configs) to off-box storage;
