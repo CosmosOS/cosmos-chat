@@ -41,16 +41,10 @@
   .app b { font-size: 15px; }
   .badges { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 2px; align-items: center; }
   .badges img { height: 40px; display: block; }
-  /* Homeserver field, same look as the sign-in form inputs */
-  .server { margin: 14px 0 4px; }
-  .server-label {
-    display: block; font-size: 13px; font-weight: 500;
-    color: #acb4bd; margin-bottom: 6px;
-  }
-  .server-name {
-    background: #15191e; border: 1px solid #394049; border-radius: 10px;
-    padding: 11px 14px; font-size: 16px; font-weight: 600; color: #f2f5f7;
-  }
+  /* Homeserver line, plain text like Element's login server display */
+  .server { margin: 12px 0 4px; }
+  .server-label { font-size: 14px; color: #acb4bd; margin-right: 6px; }
+  .server-name { font-size: 17px; font-weight: 600; color: #f2f5f7; }
   a { color: #f2f5f7; }
   hr { border: 0; border-top: 1px solid #21262c; margin: 28px 0 4px; }
   .btn {
@@ -76,10 +70,10 @@
       <h2>Get a Matrix app (recommended)</h2>
       <p>Native apps are faster and smoother on mobile. Install one, then
          sign in with your Cosmos account.</p>
-      <div class="server">
+      <p class="server">
         <span class="server-label">Homeserver</span>
-        <div class="server-name">gocosmos.org</div>
-      </div>
+        <span class="server-name">gocosmos.org</span>
+      </p>
 
       <div class="app">
         <b>Element X</b>
