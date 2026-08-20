@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cosmos Chat on your phone</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+  /* Same palette as the /join page: Element compound dark tokens
+     (theme-bg #101317, gray-1400 #f2f5f7, gray-900 #acb4bd, pill buttons,
+     glass panel: alpha-gray-400 + 20px blur), structure borrowed from
+     Element's own mobile_guide (step rows + store badges) */
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    font-family: Inter, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: #101317 url("/branding/welcome-bg.jpg") center / cover no-repeat fixed;
+    color: #f2f5f7; min-height: 100vh; display: flex;
+    align-items: center; justify-content: center; padding: 16px;
+  }
+  .glass {
+    padding: 12px; border-radius: 36px;
+    background: rgba(225, 228, 239, .13);
+    outline: 1px solid rgba(225, 228, 239, .13); outline-offset: -1px;
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    width: 100%; max-width: 444px; margin: 24px 0;
+  }
+  .card { background: #101317; border-radius: 26px; padding: 36px 28px 28px; }
+  .logo { display: block; width: 56px; height: 56px; margin: 0 auto 16px; }
+  h1 { font-size: 22px; font-weight: 600; text-align: center; margin-bottom: 4px; }
+  .sub { color: #acb4bd; font-size: 14px; text-align: center; margin-bottom: 28px; }
+  .step { display: flex; gap: 12px; margin-top: 24px; }
+  .num {
+    flex: none; width: 28px; height: 28px; border-radius: 50%;
+    border: 1px solid #394049; color: #acb4bd; font-size: 14px;
+    display: flex; align-items: center; justify-content: center; margin-top: 2px;
+  }
+  h2 { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .step p { color: #acb4bd; font-size: 14px; }
+  .app { margin-top: 14px; }
+  .app b { font-size: 15px; }
+  .badges { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 2px; align-items: center; }
+  .badges img { height: 40px; display: block; }
+  .fdroid { font-size: 13px; }
+  code {
+    font-family: inherit; background: #15191e; border: 1px solid #394049;
+    border-radius: 6px; padding: 1px 7px; font-size: 13px;
+  }
+  a { color: #f2f5f7; }
+  hr { border: 0; border-top: 1px solid #21262c; margin: 28px 0 4px; }
+  .btn {
+    display: block; width: 100%; margin-top: 16px; padding: 12px;
+    font: inherit; font-size: 15px; font-weight: 600; text-align: center;
+    text-decoration: none; border-radius: 9999px; cursor: pointer;
+    color: #f2f5f7; background: transparent; border: 1px solid #394049;
+    transition: background-color .1s;
+  }
+  .btn:hover { background: #15191e; }
+  .foot { margin-top: 22px; font-size: 13px; color: #acb4bd; text-align: center; }
+</style>
+</head>
+<body>
+<div class="glass"><div class="card">
+  <img class="logo" src="/branding/icon.png" alt="Cosmos">
+  <h1>Cosmos Chat on your phone</h1>
+  <p class="sub">Pick how you want to chat</p>
+
+  <div class="step">
+    <div class="num">1</div>
+    <div>
+      <h2>Get a Matrix app (recommended)</h2>
+      <p>Native apps are faster and smoother on mobile. Install one, then
+         sign in with your Cosmos account. Your server is
+         <code>gocosmos.org</code>.</p>
+
+      <div class="app">
+        <b>Element X</b>
+        <div class="badges">
+          <a href="https://apps.apple.com/app/element-x-secure-chat-call/id1631335820" target="_blank" rel="noopener">
+            <img src="/mobile_guide/assets/app-store-badge.svg" alt="Download Element X on the App Store"></a>
+          <a href="https://play.google.com/store/apps/details?id=io.element.android.x" target="_blank" rel="noopener">
+            <img src="/mobile_guide/assets/google-play-badge.svg" alt="Get Element X on Google Play"></a>
+        </div>
+        <p class="fdroid">Also on <a href="https://f-droid.org/packages/io.element.android.x" target="_blank" rel="noopener">F-Droid</a></p>
+      </div>
+
+      <div class="app">
+        <b>FluffyChat</b>
+        <div class="badges">
+          <a href="https://apps.apple.com/app/fluffychat/id1551469600" target="_blank" rel="noopener">
+            <img src="/mobile_guide/assets/app-store-badge.svg" alt="Download FluffyChat on the App Store"></a>
+          <a href="https://play.google.com/store/apps/details?id=chat.fluffy.fluffychat" target="_blank" rel="noopener">
+            <img src="/mobile_guide/assets/google-play-badge.svg" alt="Get FluffyChat on Google Play"></a>
+        </div>
+        <p class="fdroid">Also on <a href="https://f-droid.org/packages/chat.fluffy.fluffychat/" target="_blank" rel="noopener">F-Droid</a></p>
+      </div>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="step">
+    <div class="num">2</div>
+    <div style="flex:1">
+      <h2>Or continue in the browser</h2>
+      <p>The web app works on mobile but is not fully optimized;
+         some screens can be clunky.</p>
+      <a class="btn" id="continue" href="/#/welcome">Use the web app anyway</a>
+    </div>
+  </div>
+
+  <p class="foot">No account yet?
+     <a href="/join">Create one here</a></p>
+</div></div>
+
+<script>
+  // Element skips its mobile redirect when this sessionStorage flag is set
+  // (and, belt and braces, whenever the URL carries a fragment like the
+  // /#/welcome target below)
+  document.getElementById("continue").addEventListener("click", function () {
+    try { sessionStorage.setItem("skip_mobile_redirect", "true"); } catch (e) {}
+  });
+</script>
+</body>
+</html>

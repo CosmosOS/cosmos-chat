@@ -65,12 +65,16 @@ chat.gocosmos.org {
 	handle /join* {
 		reverse_proxy join:8080
 	}
-	# Element hard-redirects mobile browsers to an "install Element X" guide
-	# and ignores mobile_guide_toast (element-web#21616); bounce it back into
-	# the app. The fragment matters: with a fragment present Element skips
-	# the mobile redirect, so this cannot loop
-	handle /mobile_guide* {
-		redir * "/#/welcome" 302
+	# Element hard-redirects mobile browsers to its "install Element X" guide
+	# and ignores mobile_guide_toast (element-web#21616). Serve our own page
+	# instead: app recommendations (Element X, FluffyChat) plus a continue-
+	# in-browser button. Only the page itself is replaced; the guide's asset
+	# paths fall through to Element so the store badges keep loading
+	@mobileGuide path /mobile_guide /mobile_guide/ /mobile_guide/index.html
+	handle @mobileGuide {
+		root * /srv/cosmos-icons
+		rewrite * /mobile.html
+		file_server
 	}
 	handle {
 		reverse_proxy element:80
