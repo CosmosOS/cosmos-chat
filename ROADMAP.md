@@ -161,6 +161,15 @@ _Last updated: 2026-08-20_
   redirect when a fragment is present, so no loop) and the toast is
   disabled in config.json
 
+- [x] Custom mobile guide (`caddy/assets/mobile.html` served at
+  /mobile_guide, replacing the earlier plain redirect): mobile visitors get
+  a Cosmos-styled choice page recommending Element X and FluffyChat (App
+  Store, Google Play and F-Droid links, homeserver gocosmos.org spelled
+  out, badge SVGs reused from Element's own assets so nothing external
+  loads) plus a "Use the web app anyway" button that sets Element's
+  skip_mobile_redirect sessionStorage flag and lands on /#/welcome, and a
+  link to /join for people without an account
+
 ## ⏭️ Next (in order)
 
 - [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org
