@@ -3,7 +3,7 @@
 Status tracker for the Matrix/Element chat zone. Architecture and security
 details live in [docs/secure-chat-zone.md](docs/secure-chat-zone.md).
 
-_Last updated: 2026-08-18_
+_Last updated: 2026-08-20_
 
 ## ✅ Done
 
@@ -116,13 +116,26 @@ _Last updated: 2026-08-18_
   visibility, so staff get staff rooms and regular members do not. The
   test12345 account was kicked from #staff-bot-cmds and the staff only
   space (gabolate and soultron keep them: their Discord roles grant access)
+- [x] **Matrix to Discord relay on every writable channel**: relay webhooks
+  created (`!discord set-relay --create` sent as @cosmosbridge) in the 19
+  portals whose Discord channel grants @everyone SEND_MESSAGES, so Matrix
+  messages now appear on Discord under the sender's Matrix name; verified
+  end to end in #dev-tests (message relayed, Matrix redaction deleted the
+  Discord copy too), setup command noise redacted from all portals.
+  Read-only and announcement channels (rules, welcome, help, projects,
+  projects-archive, refactor-discussion, website, nativeaot-git,
+  cosmos-announcements, github-activity) intentionally stay one-way:
+  a relay webhook there would let Matrix users bypass Discord's send
+  restrictions, since webhooks can post regardless of channel permissions
 
 ## ⏭️ Next (in order)
 
 - [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org
-- [ ] Relay webhooks for more channels when wanted (`!discord set-relay
-  --create` per portal; only #staff-bot-cmds is two-way for now); keep
-  announcement and read-only channels one-way
+- [ ] #cosmos-general relay: the channel's @everyone overwrite denies
+  Manage Webhooks and the bot's roles get no re-allow, so webhook creation
+  failed there. Fix on Discord (channel settings > Permissions: add the
+  `cosmos.bridge` role with Manage Webhooks allowed), then send
+  `!discord set-relay --create` in the portal again
 - [ ] Backups: restic (pg_dump + signing key + configs) to off-box storage;
   test a restore
 - [ ] Disk usage alert (80 % threshold) + weekly image update routine
