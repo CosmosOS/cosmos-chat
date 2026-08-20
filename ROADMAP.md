@@ -154,6 +154,8 @@ _Last updated: 2026-08-20_
   allowed. Note: staff who get a Matrix account or the role later need a
   PL 50 grant in these two rooms, it is not automatic
 
+## ⏭️ Next (in order)
+
 - [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org
 - [ ] Backups: restic (pg_dump + signing key + configs) to off-box storage;
   test a restore
