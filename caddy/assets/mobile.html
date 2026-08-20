@@ -41,10 +41,20 @@
   .app b { font-size: 15px; }
   .badges { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0 2px; align-items: center; }
   .badges img { height: 40px; display: block; }
-  /* Homeserver line, plain text like Element's login server display */
+  /* Homeserver line, plain text like Element's login server display;
+     tapping the name copies it for pasting into the app */
   .server { margin: 12px 0 4px; }
   .server-label { font-size: 14px; color: #acb4bd; margin-right: 6px; }
-  .server-name { font-size: 17px; font-weight: 600; color: #f2f5f7; }
+  .server-name {
+    font-size: 17px; font-weight: 600; color: #f2f5f7;
+    background: none; border: 0; padding: 0; font-family: inherit;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .server-name svg { width: 15px; height: 15px; color: #acb4bd; }
+  .copied {
+    font-size: 13px; color: #0dbd8b; margin-left: 4px;
+    opacity: 0; transition: opacity .2s;
+  }
   a { color: #f2f5f7; }
   hr { border: 0; border-top: 1px solid #21262c; margin: 28px 0 4px; }
   .btn {
@@ -72,7 +82,16 @@
          sign in with your Cosmos account.</p>
       <p class="server">
         <span class="server-label">Homeserver</span>
-        <span class="server-name">gocosmos.org</span>
+        <button class="server-name" id="copy-server" type="button"
+                title="Copy to clipboard">gocosmos.org
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+               aria-hidden="true">
+            <rect x="9" y="9" width="13" height="13" rx="2"/>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+          </svg>
+        </button>
+        <span class="copied" id="copied">Copied!</span>
       </p>
 
       <div class="app">
@@ -123,6 +142,25 @@
   // /#/welcome target below)
   document.getElementById("continue").addEventListener("click", function () {
     try { sessionStorage.setItem("skip_mobile_redirect", "true"); } catch (e) {}
+  });
+
+  document.getElementById("copy-server").addEventListener("click", function () {
+    var done = function () {
+      var c = document.getElementById("copied");
+      c.style.opacity = "1";
+      setTimeout(function () { c.style.opacity = "0"; }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText("gocosmos.org").then(done, done);
+    } else {
+      var t = document.createElement("textarea");
+      t.value = "gocosmos.org";
+      document.body.appendChild(t);
+      t.select();
+      try { document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(t);
+      done();
+    }
   });
 </script>
 </body>
