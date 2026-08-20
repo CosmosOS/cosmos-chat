@@ -134,14 +134,14 @@ _Last updated: 2026-08-20_
   Voice Channels, staff only, Archived. Room state, so current and future
   members all see the same sidebar order
 
+- [x] #cosmos-general relay enabled: the channel's @everyone overwrite
+  denied Manage Webhooks, an allow overwrite for the `cosmos.bridge` role
+  was added on Discord, then `!discord set-relay --create` succeeded, so
+  every writable channel is now two-way
+
 ## ⏭️ Next (in order)
 
 - [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org
-- [ ] #cosmos-general relay: the channel's @everyone overwrite denies
-  Manage Webhooks and the bot's roles get no re-allow, so webhook creation
-  failed there. Fix on Discord (channel settings > Permissions: add the
-  `cosmos.bridge` role with Manage Webhooks allowed), then send
-  `!discord set-relay --create` in the portal again
 - [ ] Backups: restic (pg_dump + signing key + configs) to off-box storage;
   test a restore
 - [ ] Disk usage alert (80 % threshold) + weekly image update routine
