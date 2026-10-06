@@ -9,8 +9,11 @@ reactor it:
      which is room admin in every portal) and accepts each invite,
   4. DMs the reactor their credentials and the Element URL.
 
-Processed user IDs are persisted in /state/processed.json so reactions are
-only handled once. Pure stdlib, no dependencies.
+A first DM is sent before anything is created: members whose DMs are closed
+get their reaction removed instead of an account they cannot log into, and
+can react again once DMs are open. Processed user IDs are persisted in
+/state/processed.json so reactions are only handled once; failures are
+retried after a back-off. Pure stdlib, no dependencies.
 """
 import json
 import os
@@ -33,6 +36,7 @@ CHECK = "%E2%9C%85"  # the white-check-mark emoji, urlencoded
 STATE = "/state/processed.json"
 UA = "CosmosOnboarding (https://gocosmos.org, 1.0)"
 POLL_SECONDS = 30
+RETRY_SECONDS = 600
 
 
 def log(*args):
@@ -89,9 +93,18 @@ def save_state(state):
     os.replace(tmp, STATE)
 
 
+class DMClosed(Exception):
+    """The Discord member does not accept DMs from server members."""
+
+
 def dm(user_id, text):
     channel = discord("/users/@me/channels", "POST", {"recipient_id": user_id})
-    discord(f"/channels/{channel['id']}/messages", "POST", {"content": text})
+    try:
+        discord(f"/channels/{channel['id']}/messages", "POST", {"content": text})
+    except urllib.error.HTTPError as e:
+        if e.code == 403:  # Discord error 50007: cannot send messages to this user
+            raise DMClosed() from e
+        raise
 
 
 VIEW_CHANNEL = 0x400
@@ -164,33 +177,51 @@ def bridged_rooms(visible):
     return rooms
 
 
-def process(user):
+def process(user, state):
     uid, uname = user["id"], user["username"]
     localpart = re.sub(r"[^a-z0-9._=\-]", ".", uname.lower())
     mxid = f"@{localpart}:{DOMAIN}"
+    admin_user = f"/_synapse/admin/v2/users/{quote(mxid, safe='')}"
+    prev = state.get(uid, {})
     entry = {"username": uname, "mxid": mxid, "ts": time.time()}
 
     try:
-        matrix(f"/_synapse/admin/v2/users/{quote(mxid, safe='')}")
-        dm(uid, f"You already have a Matrix account ({mxid}). Sign in at {ELEMENT_URL}")
-        entry["status"] = "already-existed"
-        return entry
+        matrix(admin_user)
+        exists = True
     except urllib.error.HTTPError as e:
         if e.code != 404:
             raise
+        exists = False
+
+    # An account this daemon created for this member whose credentials never
+    # reached them gets a fresh password. Any other existing account is left
+    # alone: the same username does not mean the same person.
+    if exists and not (prev.get("created") and prev.get("mxid") == mxid):
+        dm(uid, f"You already have a Matrix account ({mxid}). Sign in at {ELEMENT_URL}")
+        entry["status"] = "already-existed"
+        return entry
+
+    # Raises DMClosed before anything is created if the credentials could not
+    # be delivered
+    dm(uid, "⏳ Setting up your Cosmos Matrix account, this takes about a minute...")
 
     member = discord(f"/guilds/{GUILD}/members/{uid}")
     display = member.get("nick") or member["user"].get("global_name") or uname
     password = secrets.token_urlsafe(12)
-    matrix(f"/_synapse/admin/v2/users/{quote(mxid, safe='')}", "PUT",
-           {"password": password, "displayname": display})
+    if exists:
+        matrix(admin_user, "PUT", {"password": password, "logout_devices": True})
+    else:
+        matrix(admin_user, "PUT", {"password": password, "displayname": display})
+    entry.update(created=True, status="pending: credentials not delivered")
+    state[uid] = entry
+    save_state(state)
     user_token = matrix("/_matrix/client/v3/login", "POST",
                         {"type": "m.login.password",
                          "identifier": {"type": "m.id.user", "user": localpart},
                          "password": password})["access_token"]
 
     avatar_hash = member.get("avatar") or member["user"].get("avatar")
-    if avatar_hash:
+    if avatar_hash and not exists:
         cdn = (f"https://cdn.discordapp.com/guilds/{GUILD}/users/{uid}/avatars/{avatar_hash}.png"
                if member.get("avatar")
                else f"https://cdn.discordapp.com/avatars/{uid}/{avatar_hash}.png")
@@ -270,22 +301,36 @@ def main():
     state = load_state()
     log(f"onboarding daemon up; watching {len(WATCH)} message(s), "
         f"{len(state)} user(s) already processed")
+    retry_at = {}  # Discord user id -> earliest next attempt after a failure
     while True:
         for watch in WATCH:
             channel_id, message_id = watch.split(":", 1)
             try:
                 for user in reactors(channel_id, message_id):
-                    if user.get("bot") or user["id"] in state:
+                    uid = user["id"]
+                    done = uid in state and not state[uid]["status"].startswith(("error", "pending"))
+                    if user.get("bot") or done or retry_at.get(uid, 0) > time.time():
                         continue
                     log("reaction from", user["username"])
                     try:
-                        state[user["id"]] = process(user)
-                        log("done:", state[user["id"]]["status"])
+                        state[uid] = process(user, state)
+                        log("done:", state[uid]["status"])
+                    except DMClosed:
+                        # Drop the reaction so the member can open their DMs and
+                        # react again; back off only if it could not be removed
+                        log("DMs closed:", user["username"])
+                        try:
+                            discord(f"/channels/{channel_id}/messages/{message_id}"
+                                    f"/reactions/{CHECK}/{uid}", "DELETE")
+                        except urllib.error.HTTPError as e:
+                            log("could not remove reaction:", e.code)
+                            retry_at[uid] = time.time() + RETRY_SECONDS
                     except Exception as e:  # keep the daemon alive, record the failure
                         log("ERROR processing", user["username"], repr(e))
-                        state[user["id"]] = {"username": user["username"],
-                                             "status": "error: " + repr(e)[:200],
-                                             "ts": time.time()}
+                        state[uid] = {**state.get(uid, {}), "username": user["username"],
+                                      "status": "error: " + repr(e)[:200],
+                                      "ts": time.time()}
+                        retry_at[uid] = time.time() + RETRY_SECONDS
                     save_state(state)
             except Exception as e:
                 log("ERROR polling", watch, repr(e))
