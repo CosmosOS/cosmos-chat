@@ -1,29 +1,34 @@
-"""Discord forum channels mirrored to Matrix as threaded rooms.
+"""Discord forum channels mirrored to Matrix: an index room plus one room per post.
 
 mautrix-discord only bridges text and announcement channels, so the forums
-listed in FORUM_CHANNELS are mirrored by this daemon instead, one Matrix
-room per forum with one thread per post:
-  - the room is built like a bridged channel ('#name', m.bridge state, in
-    its Discord category's space), so it sits in the room list next to the
-    other channels and the onboarding daemon and /join page auto-join new
-    accounts to it; accounts already in the category space are joined once
-    when it is created
-  - each post is a thread whose root is the title, the tags and the opening
-    message; Element's Threads panel then lists the posts by activity
+listed in FORUM_CHANNELS are mirrored by this daemon instead:
+  - the index room is built like a bridged channel ('#name', m.bridge state,
+    in its Discord category's space), so it sits in the room list next to
+    the other channels and the onboarding daemon and /join page auto-join
+    new accounts to it; accounts already in the category space are joined
+    once when it is created. It holds a pinned how-to and one card per post
+    (title, tags, author, reply count, last activity, link), edited as the
+    post changes so updates never notify anyone
+  - each post is its own room in the same category space: name = "📌 " +
+    title, topic = tags, author and Discord link, avatar = first image of
+    the opening message. Members of the guild space can join any post from
+    its card; nobody is joined automatically
   - Discord messages are sent by the bridge's own ghosts (@discord_<id>), so
     authors look exactly as they do in the bridged channels
-  - Matrix replies, edits and redactions inside a post's thread go back to
-    the post through a webhook on the forum, under the sender's Matrix name
-    and avatar (served by the bridge's avatar proxy), the same look as the
-    bridge's relay mode. Messages outside a post's thread are not relayed
-    and get a short notice instead
+  - Matrix messages, edits and redactions in a post room go back to the post
+    through a webhook on the forum, under the sender's Matrix name and avatar
+    (served by the bridge's avatar proxy), the same look as the bridge's
+    relay mode
+  - "!post Title" + description + #tags in the index creates a Discord post
+    through the same webhook, its room (with the author joined) and its
+    card; anything else posted in the index is redacted with a hint
 
 The first time a forum is seen, every post with activity in the last
 FORUM_BACKFILL_DAYS days is imported: its opening message plus that many
 days of replies (a notice links older ones on Discord). A post revived later
 is imported the same way. Discord is polled every POLL_SECONDS, so edits and
 deletions made on Discord are not mirrored. State lives in
-/state/forum-threads.json. Pure stdlib, no dependencies.
+/state/forum-index.json. Pure stdlib, no dependencies.
 """
 import base64
 import hashlib
@@ -51,7 +56,7 @@ BACKFILL_DAYS = int(os.environ.get("FORUM_BACKFILL_DAYS", "60"))
 # bridge.public_address), so webhook avatars use the bridge's proxy route
 PROXY_KEY = os.environ.get("BRIDGE_AVATAR_PROXY_KEY", "")
 PUBLIC_ADDRESS = os.environ.get("BRIDGE_PUBLIC_ADDRESS", "https://matrix.gocosmos.org")
-STATE = "/state/forum-threads.json"
+STATE = "/state/forum-index.json"
 UA = "CosmosForum (https://gocosmos.org, 1.0)"
 POLL_SECONDS = 30
 MATRIX_MAX_UPLOAD = 20 * 1024 * 1024  # synapse max_upload_size
@@ -155,13 +160,15 @@ def load_state():
             state = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         state = {}
-    # forums: forum id -> {room, members, webhook, backfilled, linked, members_joined}
-    # posts: thread id -> {forum, root, root_sender, name, tags, text, last, latest}
+    # forums: forum id -> {parent, index, webhook, backfilled, linked, members_joined}
+    # posts: thread id -> {forum, origin, room, name, tags, author, text, avatar,
+    #                      count, activity, last, members, card, card_body}
     # d2e / e2d: Discord message id <-> first Matrix event id, both origins
-    # e2t: Matrix event id -> Discord thread (post) id, for every mirrored event
     # relayed: Matrix event ids sent to Discord through the webhook
     # ghosts: ghost user ids known to exist
-    for key in ("forums", "posts", "d2e", "e2d", "e2t", "relayed", "ghosts"):
+    # pending: Matrix user -> refused !post event ids to clean up on success
+    # cooldown: Matrix user -> time of their last !post
+    for key in ("forums", "posts", "d2e", "e2d", "relayed", "ghosts", "pending", "cooldown"):
         state.setdefault(key, {})
     return state
 
@@ -282,6 +289,21 @@ def send(room, content, sender, ts=None, relates=None):
                   "PUT", content, as_user=sender, ts=ts)["event_id"]
 
 
+def edit(room, event_id, content, sender=BOT_MXID):
+    """Replace a message's content (m.replace), with the usual fallback."""
+    fallback = {k: v for k, v in content.items() if k in ("msgtype", "format")}
+    fallback["body"] = "* " + content["body"]
+    if "formatted_body" in content:
+        fallback["formatted_body"] = "* " + content["formatted_body"]
+    fallback["m.new_content"] = content
+    return send(room, fallback, sender, relates={"rel_type": "m.replace", "event_id": event_id})
+
+
+def redact(room, event_id, reason):
+    matrix(f"/_matrix/client/v3/rooms/{q(room)}/redact/{q(event_id)}/{secrets.token_hex(8)}",
+           "PUT", {"reason": reason})
+
+
 def upload(data, ctype, name, sender=BOT_MXID):
     return matrix(f"/_matrix/media/v3/upload?filename={q(name)}", "POST", data,
                   as_user=sender, headers={"Content-Type": ctype})["content_uri"]
@@ -291,22 +313,19 @@ def set_state(room, etype, key, content):
     matrix(f"/_matrix/client/v3/rooms/{q(room)}/state/{etype}/{q(key)}", "PUT", content)
 
 
-def thread_rel(post, reply_to=None):
-    """Relation of an event in a post's thread: a real reply when reply_to
-    is set, otherwise the usual fallback to the thread's latest event."""
-    return {"rel_type": "m.thread", "event_id": post["root"],
-            "is_falling_back": reply_to is None,
-            "m.in_reply_to": {"event_id": reply_to or post["latest"]}}
-
-
-def reply_rel(ev):
-    """Relation for a bot notice answering a Matrix event, kept in the
-    event's thread when it has one."""
-    rel = (ev.get("content") or {}).get("m.relates_to") or {}
-    out = {"m.in_reply_to": {"event_id": ev["event_id"]}}
-    if rel.get("rel_type") == "m.thread":
-        out.update(rel_type="m.thread", event_id=rel["event_id"], is_falling_back=False)
-    return out
+def restricted_state(parent):
+    """Initial state of the index and post rooms: joinable by guild space
+    members, full history for joiners, a canonical parent space."""
+    return [
+        {"type": "m.room.join_rules", "state_key": "",
+         "content": {"join_rule": "restricted",
+                     "allow": [{"type": "m.room_membership", "room_id": GUILD_SPACE}]}},
+        {"type": "m.room.history_visibility", "state_key": "",
+         "content": {"history_visibility": "shared"}},
+        {"type": "m.room.guest_access", "state_key": "", "content": {"guest_access": "forbidden"}},
+        {"type": "m.space.parent", "state_key": parent,
+         "content": {"via": [DOMAIN], "canonical": True}},
+    ]
 
 
 def ensure_ghost(author, webhook=False):
@@ -345,48 +364,63 @@ def ensure_ghost(author, webhook=False):
     return mxid
 
 
-def ensure_member(fid, mxid):
-    forum = S["forums"][fid]
-    if mxid in forum["members"]:
+def ensure_member(post, mxid):
+    if mxid in post["members"]:
         return
     try:
-        matrix(f"/_matrix/client/v3/rooms/{q(forum['room'])}/invite", "POST", {"user_id": mxid})
+        matrix(f"/_matrix/client/v3/rooms/{q(post['room'])}/invite", "POST", {"user_id": mxid})
     except urllib.error.HTTPError as e:
         if e.code != 403:  # already invited or joined
             raise
-    matrix(f"/_matrix/client/v3/rooms/{q(forum['room'])}/join", "POST", {}, as_user=mxid)
-    forum["members"].append(mxid)
+    matrix(f"/_matrix/client/v3/rooms/{q(post['room'])}/join", "POST", {}, as_user=mxid)
+    post["members"].append(mxid)
+
+
+def admin_join(room, users):
+    """Join local accounts to a room through the admin API, which needs the
+    server admin in the room: it joins, joins everyone, then leaves."""
+    admin = matrix("/_matrix/client/v3/account/whoami", token=ADMIN_TOKEN)["user_id"]
+    try:
+        matrix(f"/_matrix/client/v3/rooms/{q(room)}/invite", "POST", {"user_id": admin})
+    except urllib.error.HTTPError as e:
+        if e.code != 403:  # still in the room from an interrupted run
+            raise
+    matrix(f"/_matrix/client/v3/rooms/{q(room)}/join", "POST", {}, token=ADMIN_TOKEN)
+    joined = 0
+    for user in users:
+        if user == admin:
+            continue
+        try:
+            matrix(f"/_synapse/admin/v1/join/{q(room)}", "POST", {"user_id": user}, token=ADMIN_TOKEN)
+            joined += 1
+        except urllib.error.HTTPError as e:
+            log("could not join", user, e.code)
+    matrix(f"/_matrix/client/v3/rooms/{q(room)}/leave", "POST", {}, token=ADMIN_TOKEN)
+    return joined
 
 
 # --- Discord to Matrix -----------------------------------------------------
 
-def text_content(text):
-    return {"msgtype": "m.text", "body": text,
-            "format": "org.matrix.custom.html", "formatted_body": to_html(text)}
-
-
-def tag_names(fid, thread):
+def tag_names(fid, tag_ids):
     tags = {t["id"]: t["name"] for t in FORUM_INFO[fid].get("available_tags", [])}
-    return [tags[t] for t in thread.get("applied_tags", []) if t in tags]
+    return [tags[t] for t in tag_ids if t in tags]
 
 
-def root_content(fid, thread, text):
-    """A post's thread root: title, tags, then the opening message."""
-    tags = tag_names(fid, thread)
-    body = f"📌 {thread['name']}"
-    formatted = f"<strong>📌 {html.escape(thread['name'])}</strong>"
+def post_topic(fid, tid, post):
+    parts = []
+    tags = tag_names(fid, post["tags"])
     if tags:
-        body += "\n🏷️ " + ", ".join(tags)
-        formatted += f"<br><em>🏷️ {html.escape(', '.join(tags))}</em>"
-    if text:
-        body += "\n\n" + text
-        formatted += "<br><br>" + to_html(text)
-    return {"msgtype": "m.text", "body": body,
-            "format": "org.matrix.custom.html", "formatted_body": formatted}
+        parts.append("🏷️ " + ", ".join(tags))
+    if post.get("author"):
+        parts.append("by " + post["author"])
+    parts.append(f"https://discord.com/channels/{GUILD}/{tid}")
+    parts.append(f"listed in #{FORUM_INFO[fid]['name']}")
+    return " · ".join(parts)
 
 
-def send_attachment(room, att, sender, ts, relates):
+def send_attachment(room, att, sender, ts, reply_to):
     name = att.get("filename") or "file"
+    relates = {"m.in_reply_to": {"event_id": reply_to}} if reply_to else None
     if att.get("size", 0) > MATRIX_MAX_UPLOAD:
         return send(room, {"msgtype": "m.text", "body": f"📎 {name}: {att['url']}"}, sender, ts, relates)
     data = request(att["url"], raw=True)
@@ -400,43 +434,32 @@ def send_attachment(room, att, sender, ts, relates):
     return send(room, content, sender, ts, relates)
 
 
-def send_attachments(fid, tid, post, msg, sender, ts, reply):
-    """One event per attachment in the post's thread; the first one carries
-    the reply when the message has no text."""
-    room = S["forums"][fid]["room"]
-    sent = []
-    for att in msg.get("attachments") or []:
-        try:
-            eid = send_attachment(room, att, sender, ts, thread_rel(post, None if sent else reply))
-        except urllib.error.HTTPError as e:
-            log("attachment failed:", att.get("filename"), e.code)
-            continue
-        post["latest"] = eid
-        S["e2t"][eid] = tid
-        sent.append(eid)
-    return sent
-
-
-def mirror_message(fid, tid, post, msg):
+def mirror_message(fid, post, msg):
     """Send one Discord message (text, then one event per attachment) into
-    the post's thread as its author's ghost, with the original timestamp."""
+    the post's room as its author's ghost, with the original timestamp."""
     if msg["id"] in S["d2e"] or msg.get("type", 0) not in MESSAGE_TYPES:
         return
     if msg.get("webhook_id") and msg["webhook_id"] == S["forums"][fid].get("webhook", {}).get("id"):
         return  # a Matrix message this daemon relayed
     ghost = ensure_ghost(msg["author"], webhook=bool(msg.get("webhook_id")))
-    ensure_member(fid, ghost)
+    ensure_member(post, ghost)
     ts = snowflake_ms(msg["id"])
     ref = (msg.get("message_reference") or {}).get("message_id")
     reply = S["d2e"].get(ref) if msg.get("type") == 19 else None
     first = None
     text = message_text(msg)
     if text:
-        first = send(S["forums"][fid]["room"], text_content(text), ghost, ts, thread_rel(post, reply))
-        post["latest"] = first
-        S["e2t"][first] = tid
-    sent = send_attachments(fid, tid, post, msg, ghost, ts, None if first else reply)
-    first = first or (sent[0] if sent else None)
+        first = send(post["room"], {"msgtype": "m.text", "body": text,
+                                    "format": "org.matrix.custom.html",
+                                    "formatted_body": to_html(text)}, ghost, ts,
+                     {"m.in_reply_to": {"event_id": reply}} if reply else None)
+    for att in msg.get("attachments") or []:
+        try:
+            eid = send_attachment(post["room"], att, ghost, ts, None if first else reply)
+        except urllib.error.HTTPError as e:
+            log("attachment failed:", att.get("filename"), e.code)
+            continue
+        first = first or eid
     if first:
         S["d2e"][msg["id"]] = first
         S["e2d"][first] = msg["id"]
@@ -459,64 +482,139 @@ def fetch_after(channel_id, after):
 
 def mirror_new(fid, tid, post):
     for msg in fetch_after(tid, post["last"]):
-        mirror_message(fid, tid, post, msg)
+        mirror_message(fid, post, msg)
         post["last"] = msg["id"]
+        post["activity"] = max(post["activity"], snowflake_ms(msg["id"]))
         save_state()
 
 
+def room_avatar(starter):
+    """mxc of a thumbnail of the opening message's first image, if any."""
+    for att in (starter or {}).get("attachments") or []:
+        if not (att.get("content_type") or "").startswith("image/"):
+            continue
+        url = att.get("proxy_url") or att["url"]
+        if att.get("width") and att.get("height"):
+            w = min(512, att["width"])
+            url += ("&" if "?" in url else "?") + f"width={w}&height={max(1, att['height'] * w // att['width'])}"
+        try:
+            return upload(request(url, raw=True), att["content_type"], att.get("filename") or "avatar")
+        except urllib.error.HTTPError as e:
+            log("room avatar failed:", e.code)
+        return None
+    return None
+
+
+def create_post_room(fid, tid, post):
+    """The post's own room, a child of the forum's category space."""
+    state = restricted_state(S["forums"][fid]["parent"])
+    if post.get("avatar"):
+        state.append({"type": "m.room.avatar", "state_key": "", "content": {"url": post["avatar"]}})
+    post["room"] = matrix("/_matrix/client/v3/createRoom", "POST", {
+        "name": "📌 " + post["name"][:250], "topic": post_topic(fid, tid, post),
+        "preset": "private_chat", "visibility": "private", "initial_state": state,
+        # the admin API join of a Matrix post's author invites as the (level 0) admin
+        "power_level_content_override": {"invite": 0},
+    })["room_id"]
+    post["members"] = [BOT_MXID]
+    S["posts"][tid] = post
+    CHANNELS[tid] = post["name"]
+    save_state()
+
+
+def link_post(fid, post):
+    set_state(S["forums"][fid]["parent"], "m.space.child", post["room"], {"via": [DOMAIN]})
+
+
 def import_post(fid, thread, cutoff_ms):
-    """Start the post's thread with its title, tags and opening message,
-    then mirror every reply since cutoff_ms (all of them for posts created
-    after it)."""
+    """Create the room of a post made on Discord, mirror its opening message
+    plus every reply since cutoff_ms (all of them for posts created after
+    it), then list it in the index."""
     tid = thread["id"]
-    room = S["forums"][fid]["room"]
     try:
         starter = discord(f"/channels/{tid}/messages/{tid}")
     except urllib.error.HTTPError as e:
         if e.code != 404:  # the opening message was deleted
             raise
         starter = None
-    sender, text, ts = BOT_MXID, "", snowflake_ms(tid)
+    author = None
     if starter:
-        sender = ensure_ghost(starter["author"], webhook=bool(starter.get("webhook_id")))
-        ensure_member(fid, sender)
-        text = message_text(starter)
-    root = send(room, root_content(fid, thread, text), sender, ts)
-    older = ts < cutoff_ms
-    post = {"forum": fid, "root": root, "root_sender": sender, "name": thread["name"],
-            "tags": thread.get("applied_tags", []), "text": text, "latest": root,
+        author = starter["author"].get("global_name") or starter["author"]["username"]
+    older = snowflake_ms(tid) < cutoff_ms
+    post = {"forum": fid, "origin": "discord", "name": thread["name"],
+            "tags": thread.get("applied_tags", []), "author": author,
+            "text": message_text(starter) if starter else "", "avatar": room_avatar(starter),
+            "count": thread.get("message_count", 0),
+            "activity": snowflake_ms(thread.get("last_message_id") or tid),
             "last": ms_snowflake(cutoff_ms) if older else tid}
-    S["posts"][tid] = post
-    S["e2t"][root] = tid
+    create_post_room(fid, tid, post)
     if starter:
-        S["d2e"][starter["id"]] = root
-        S["e2d"][root] = starter["id"]
-    CHANNELS[tid] = thread["name"]
-    save_state()
-    if starter:
-        send_attachments(fid, tid, post, starter, sender, ts, None)
+        mirror_message(fid, post, starter)
     if older:
-        post["latest"] = send(room, {"msgtype": "m.notice",
-                                     "body": f"Older messages of this post are on Discord: "
-                                             f"https://discord.com/channels/{GUILD}/{tid}"},
-                              BOT_MXID, ts + 1, thread_rel(post))
-        S["e2t"][post["latest"]] = tid
-    save_state()
+        send(post["room"], {"msgtype": "m.notice",
+                            "body": f"Older messages of this post are on Discord: "
+                                    f"https://discord.com/channels/{GUILD}/{tid}"},
+             BOT_MXID, snowflake_ms(tid) + 1)
     mirror_new(fid, tid, post)
+    link_post(fid, post)
+    update_card(fid, tid, post)
     log("post imported:", thread["name"])
 
 
-def refresh_meta(fid, tid, post, thread):
-    """Follow title and tag changes made on Discord by editing the root."""
-    if thread["name"] == post["name"] and thread.get("applied_tags", []) == post["tags"]:
+# --- index cards -----------------------------------------------------------
+
+def card_content(fid, tid, post):
+    link = f"https://matrix.to/#/{post['room']}?via={DOMAIN}"
+    meta = []
+    tags = tag_names(fid, post["tags"])
+    if tags:
+        meta.append("🏷️ " + ", ".join(tags))
+    if post.get("author"):
+        meta.append("by " + post["author"])
+    meta.append(f"💬 {post['count']}")
+    meta.append("🕒 " + time.strftime("%Y-%m-%d", time.gmtime(post["activity"] / 1000)))
+    excerpt = (post.get("text") or "").strip().split("\n")[0]
+    if len(excerpt) > 160:
+        excerpt = excerpt[:160] + "…"
+    body = f"📌 {post['name']}\n{' · '.join(meta)}\n" + (f"{excerpt}\n" if excerpt else "") + link
+    formatted = (f'<strong>📌 <a href="{html.escape(link)}">{html.escape(post["name"])}</a></strong>'
+                 f"<br>{html.escape(' · '.join(meta))}")
+    if excerpt:
+        formatted += f"<br><em>{html.escape(excerpt)}</em>"
+    return {"msgtype": "m.notice", "body": body,
+            "format": "org.matrix.custom.html", "formatted_body": formatted}
+
+
+def update_card(fid, tid, post):
+    """Post the card in the index, or edit it when something it shows
+    changed (edits do not notify anyone)."""
+    content = card_content(fid, tid, post)
+    if post.get("card_body") == content["body"]:
         return
-    new = root_content(fid, thread, post["text"])
-    send(S["forums"][fid]["room"],
-         {"msgtype": "m.text", "body": "* " + new["body"], "format": "org.matrix.custom.html",
-          "formatted_body": "* " + new["formatted_body"], "m.new_content": new},
-         post["root_sender"], relates={"rel_type": "m.replace", "event_id": post["root"]})
-    post["name"], post["tags"] = thread["name"], thread.get("applied_tags", [])
-    CHANNELS[tid] = thread["name"]
+    index = S["forums"][fid]["index"]
+    if post.get("card"):
+        edit(index, post["card"], content)
+    else:
+        post["card"] = send(index, content, BOT_MXID)
+    post["card_body"] = content["body"]
+    save_state()
+
+
+def refresh_post(fid, tid, post, thread):
+    """Follow title and tag changes made on Discord, new replies and the
+    reply count."""
+    if thread["name"] != post["name"] or thread.get("applied_tags", []) != post["tags"]:
+        post["name"], post["tags"] = thread["name"], thread.get("applied_tags", [])
+        set_state(post["room"], "m.room.name", "", {"name": "📌 " + post["name"][:250]})
+        set_state(post["room"], "m.room.topic", "", {"topic": post_topic(fid, tid, post)})
+        CHANNELS[tid] = post["name"]
+    post["count"] = thread.get("message_count", post["count"])
+    last = thread.get("last_message_id")
+    if last and int(last) > int(post["last"]):
+        mirror_new(fid, tid, post)
+    if last:
+        post["activity"] = max(post["activity"], snowflake_ms(last))
+    update_card(fid, tid, post)
     save_state()
 
 
@@ -531,18 +629,16 @@ def poll_discord():
         try:
             if post is None:  # a new post, or an old one revived by a reply
                 import_post(fid, thread, cutoff)
-                continue
-            refresh_meta(fid, tid, post, thread)
-            last = thread.get("last_message_id")
-            if last and int(last) > int(post["last"]):
-                mirror_new(fid, tid, post)
+            else:
+                refresh_post(fid, tid, post, thread)
         except Exception as e:  # keep the other posts going
             log("ERROR syncing post", thread.get("name"), repr(e))
 
 
 def backfill_forum(fid):
     """Import every post with activity since the cutoff, active or
-    archived, in creation order so the room reads chronologically."""
+    archived, least recently active first, so the newest cards end up at
+    the bottom of the index."""
     cutoff = time.time() * 1000 - BACKFILL_DAYS * 86400000
     threads = [t for t in discord(f"/guilds/{GUILD}/threads/active")["threads"]
                if t.get("parent_id") == fid]
@@ -557,7 +653,7 @@ def backfill_forum(fid):
         if iso_ms(before) < cutoff:  # archived before the cutoff: no newer activity
             break
     recent = [t for t in threads if snowflake_ms(t.get("last_message_id") or t["id"]) >= cutoff]
-    recent.sort(key=lambda t: int(t["id"]))
+    recent.sort(key=lambda t: snowflake_ms(t.get("last_message_id") or t["id"]))
     log(f"backfilling {len(recent)} post(s) of #{FORUM_INFO[fid]['name']}")
     for thread in recent:
         try:
@@ -566,6 +662,8 @@ def backfill_forum(fid):
                 import_post(fid, thread, cutoff)
             else:  # resume a post interrupted by a restart
                 mirror_new(fid, thread["id"], post)
+                link_post(fid, post)
+                update_card(fid, thread["id"], post)
         except Exception as e:  # keep the other posts going
             log("ERROR importing post", thread.get("name"), repr(e))
     S["forums"][fid]["backfilled"] = True
@@ -612,21 +710,26 @@ def plain_body(content):
     return body
 
 
-def reply_embed(tid, room, target):
+def reply_embed(tid, post, target):
     """The bridge relay's reply embed: a link to the replied message, its
     author and its first line."""
     dmsg = S["e2d"].get(target)
     if not dmsg:
         return None
     try:
-        ev = matrix(f"/_matrix/client/v3/rooms/{q(room)}/event/{q(target)}")
+        ev = matrix(f"/_matrix/client/v3/rooms/{q(post['room'])}/event/{q(target)}")
     except urllib.error.HTTPError:
         return None
     ghost = re.match(r"@discord_(\d+):", ev["sender"])
-    who = f"<@{ghost.group(1)}>" if ghost else member_profile(room, ev["sender"])[0]
+    if ghost:
+        who = f"<@{ghost.group(1)}>"
+    elif ev["sender"] == BOT_MXID and post.get("author"):  # opening of a Matrix-made post
+        who = post["author"]
+    else:
+        who = member_profile(post["room"], ev["sender"])[0]
     content = ev.get("content", {})
-    if target == S["posts"][tid]["root"]:
-        content = {"body": S["posts"][tid]["text"] or S["posts"][tid]["name"]}
+    if ev["sender"] == BOT_MXID and post.get("origin") == "matrix":
+        content = {"body": post.get("text") or post["name"]}
     line = plain_body(content).strip().split("\n")[0]
     if len(line) > 72:
         line = line[:72] + "…"
@@ -658,15 +761,18 @@ def ensure_webhook(fid):
     return forum["webhook"]
 
 
-def execute(fid, tid, method="POST", message_id=None, payload=None, file=None):
-    """Run the forum webhook inside a post. A deleted webhook (Discord error
-    10015) is recreated once."""
+def execute(fid, tid=None, method="POST", message_id=None, payload=None, file=None):
+    """Run the forum webhook: inside post tid, or without tid to create a
+    new post (payload thread_name). A deleted webhook (Discord error 10015)
+    is recreated once."""
     for attempt in (1, 2):
         hook = ensure_webhook(fid)
         url = f"https://discord.com/api/v10/webhooks/{hook['id']}/{hook['token']}"
         if message_id:
             url += f"/messages/{message_id}"
-        url += f"?thread_id={tid}" + ("&wait=true" if method == "POST" else "")
+        params = ([f"thread_id={tid}"] if tid else []) + (["wait=true"] if method == "POST" else [])
+        if params:
+            url += "?" + "&".join(params)
         try:
             if file:
                 data, ctype = multipart(payload, *file)
@@ -680,51 +786,34 @@ def execute(fid, tid, method="POST", message_id=None, payload=None, file=None):
             raise
 
 
-NOT_A_POST = ("This message was not sent to Discord: each thread in this room is a "
-              "Discord forum post, so reply inside a post's thread. New posts can "
-              "only be created on Discord for now.")
-NOTICED = set()  # top-level messages already answered with NOT_A_POST
-
-
-def relay_event(fid, ev):
+def relay_event(tid, post, ev):
+    """A Matrix message, edit or redaction in a post room, to Discord."""
     sender = ev["sender"]
-    if sender == BOT_MXID or sender.startswith("@discord_") or ev["event_id"] in S["e2t"]:
+    if sender == BOT_MXID or sender.startswith("@discord_") or ev["event_id"] in S["e2d"]:
         return
-    room = S["forums"][fid]["room"]
+    fid = post["forum"]
     if ev["type"] == "m.room.redaction":
         target = ev.get("redacts") or ev.get("content", {}).get("redacts")
         if target in S["relayed"]:
-            execute(fid, S["e2t"][target], "DELETE", S["e2d"][target])
+            execute(fid, tid, "DELETE", S["e2d"][target])
         return
     content = ev.get("content") or {}
     rel = content.get("m.relates_to") or {}
     if rel.get("rel_type") == "m.replace":
-        target = rel.get("event_id")
-        if target in S["relayed"]:
+        if rel.get("event_id") in S["relayed"]:
             new = content.get("m.new_content") or {}
-            execute(fid, S["e2t"][target], "PATCH", S["e2d"][target],
+            execute(fid, tid, "PATCH", S["e2d"][rel["event_id"]],
                     {"content": plain_body(new)[:2000], "allowed_mentions": {"parse": []}})
         return
     msgtype = content.get("msgtype")
     if not msgtype:
         return
-    target = None if rel.get("is_falling_back") else (rel.get("m.in_reply_to") or {}).get("event_id")
-    tid = S["e2t"].get(rel.get("event_id")) if rel.get("rel_type") == "m.thread" else None
-    if tid is None and target:
-        tid = S["e2t"].get(target)
-    if tid is None:
-        root = rel.get("event_id") if rel.get("rel_type") == "m.thread" else ev["event_id"]
-        if root not in NOTICED:
-            NOTICED.add(root)
-            send(room, {"msgtype": "m.notice", "body": NOT_A_POST}, BOT_MXID,
-                 relates={"rel_type": "m.thread", "event_id": root, "is_falling_back": False,
-                          "m.in_reply_to": {"event_id": ev["event_id"]}})
-        return
-    name, avatar = member_profile(room, sender)
+    name, avatar = member_profile(post["room"], sender)
     payload = {"username": webhook_name(name), "allowed_mentions": {"parse": []}}
     if avatar:
         payload["avatar_url"] = avatar
-    embed = reply_embed(tid, room, target) if target else None
+    target = None if rel.get("is_falling_back") else (rel.get("m.in_reply_to") or {}).get("event_id")
+    embed = reply_embed(tid, post, target) if target else None
     if embed:
         payload["embeds"] = [embed]
     sent = None
@@ -753,24 +842,161 @@ def relay_event(fid, ev):
             payload.pop("embeds", None)
     S["e2d"][ev["event_id"]] = sent["id"]
     S["d2e"][sent["id"]] = ev["event_id"]
-    S["e2t"][ev["event_id"]] = tid
     S["relayed"][ev["event_id"]] = True
-    S["posts"][tid]["latest"] = ev["event_id"]
     save_state()
 
 
+# --- !post in the index room -----------------------------------------------
+
+POST_COOLDOWN = 600  # seconds between two posts of the same Matrix user
+NOT_A_POST = ("Only new posts go here. To post your project, send: !post Your project name, "
+              "then a description on the next lines and optional #tags (see the pinned message). "
+              "To reply to a post, open its card.")
+
+
+def instructions(fid):
+    tags = ", ".join("#" + t["name"] for t in FORUM_INFO[fid].get("available_tags", []))
+    body = ("📌 How to post your project from Matrix\n"
+            "Send one message starting with !post:\n\n"
+            "!post Your project name\n"
+            "A short description of your project\n"
+            f"#os #c#\n\n"
+            f"The first line is the title, the next lines the description, and #tags are "
+            f"optional ({tags}). The bot creates the post on Discord under your name, opens a "
+            f"room for it and adds you to it: add screenshots and details there.\n"
+            "Each card below opens a post's room, and replies there are shared with Discord. "
+            "Other messages in this room are removed to keep the list clean.")
+    formatted = ("<strong>📌 How to post your project from Matrix</strong><br>"
+                 "Send one message starting with <code>!post</code>:"
+                 "<pre><code>!post Your project name\nA short description of your project\n#os #c#</code></pre>"
+                 f"The first line is the title, the next lines the description, and #tags are "
+                 f"optional ({html.escape(tags)}). The bot creates the post on Discord under your name, "
+                 "opens a room for it and adds you to it: add screenshots and details there.<br>"
+                 "Each card below opens a post's room, and replies there are shared with Discord. "
+                 "Other messages in this room are removed to keep the list clean.")
+    return {"msgtype": "m.text", "body": body,
+            "format": "org.matrix.custom.html", "formatted_body": formatted}
+
+
+def parse_post(fid, body):
+    """'!post Title\\ndescription\\n#tags' -> (title, description, tag ids,
+    error or None)."""
+    lines = body.strip().split("\n")
+    title = lines[0][len("!post"):].strip()
+    rest = lines[1:]
+    if not title:
+        while rest and not rest[0].strip():
+            rest.pop(0)
+        title = rest.pop(0).strip() if rest else ""
+    by_name = {t["name"].lower(): t["id"] for t in FORUM_INFO[fid].get("available_tags", [])}
+    tag_ids = []
+    for word in re.findall(r"(?<![\w#])#([^\s#]+(?:#)?)", "\n".join(rest)):
+        tag = by_name.get(word.lower())
+        if tag and tag not in tag_ids:
+            tag_ids.append(tag)
+    while rest and (not rest[-1].strip() or all(
+            w.startswith("#") and w[1:].lower() in by_name for w in rest[-1].split())):
+        rest.pop()  # a trailing line of tags is not part of the description
+    description = "\n".join(rest).strip()
+    if not title:
+        return None, None, None, "Your post needs a title: !post Your project name"
+    if FORUM_INFO[fid].get("flags", 0) & 16 and not tag_ids:  # REQUIRE_TAG
+        names = ", ".join("#" + t["name"] for t in FORUM_INFO[fid].get("available_tags", []))
+        return None, None, None, f"This forum requires at least one tag: {names}"
+    return title[:100], description, tag_ids[:5], None
+
+
+def reject(fid, ev, reason):
+    """Explain a refused !post in a reply; both are removed once the user
+    posts successfully."""
+    index = S["forums"][fid]["index"]
+    notice = send(index, {"msgtype": "m.notice", "body": "⚠️ " + reason}, BOT_MXID,
+                  relates={"m.in_reply_to": {"event_id": ev["event_id"]}})
+    S["pending"].setdefault(ev["sender"], []).extend([ev["event_id"], notice])
+    save_state()
+
+
+def create_post(fid, ev):
+    """A !post from the index: create the Discord post through the webhook
+    under the sender's Matrix name and avatar, its room and its card."""
+    sender = ev["sender"]
+    index = S["forums"][fid]["index"]
+    wait = S["cooldown"].get(sender, 0) + POST_COOLDOWN - time.time()
+    if wait > 0:
+        return reject(fid, ev, f"You can create one post every {POST_COOLDOWN // 60} minutes; "
+                               f"try again in {int(wait // 60) + 1} min.")
+    title, description, tag_ids, error = parse_post(fid, plain_body(ev.get("content") or {}))
+    if error:
+        return reject(fid, ev, error)
+    name, avatar = member_profile(index, sender)
+    payload = {"thread_name": title, "content": (description or title)[:2000],
+               "applied_tags": tag_ids, "username": webhook_name(name),
+               "allowed_mentions": {"parse": []}}
+    if avatar:
+        payload["avatar_url"] = avatar
+    try:
+        msg = execute(fid, payload=payload)
+    except urllib.error.HTTPError as e:
+        log("could not create Discord post:", e.code)
+        return reject(fid, ev, "The post could not be created on Discord, please try again later.")
+    tid = msg["channel_id"]
+    post = {"forum": fid, "origin": "matrix", "name": title, "tags": tag_ids, "author": name,
+            "text": description, "avatar": None, "count": 0,
+            "activity": snowflake_ms(msg["id"]), "last": msg["id"]}
+    create_post_room(fid, tid, post)
+    tags = tag_names(fid, tag_ids)
+    body = f"📌 {title}" + (f"\n🏷️ {', '.join(tags)}" if tags else "") + f"\nby {name}"
+    formatted = (f"<strong>📌 {html.escape(title)}</strong><br>"
+                 + (f"<em>🏷️ {html.escape(', '.join(tags))}</em><br>" if tags else "")
+                 + f"by {html.escape(name)}")
+    if description:
+        body += "\n\n" + description
+        formatted += "<br><br>" + to_html(description)
+    opening = send(post["room"], {"msgtype": "m.text", "body": body,
+                                  "format": "org.matrix.custom.html",
+                                  "formatted_body": formatted}, BOT_MXID)
+    S["d2e"][msg["id"]] = opening
+    S["e2d"][opening] = msg["id"]
+    link_post(fid, post)
+    admin_join(post["room"], [sender])
+    redact(index, ev["event_id"], "Posted: see its card below")
+    for old in S["pending"].pop(sender, []):
+        try:
+            redact(index, old, "Replaced by a successful post")
+        except urllib.error.HTTPError:
+            pass
+    S["cooldown"][sender] = time.time()
+    update_card(fid, tid, post)
+    log("post created from Matrix:", title, "by", sender)
+
+
+def handle_index_event(fid, ev):
+    sender = ev["sender"]
+    if sender == BOT_MXID or sender.startswith("@discord") or ev["type"] != "m.room.message":
+        return
+    content = ev.get("content") or {}
+    rel = content.get("m.relates_to") or {}
+    if (content.get("msgtype") == "m.text" and rel.get("rel_type") != "m.replace"
+            and plain_body(content).lstrip().startswith("!post")):
+        create_post(fid, ev)
+    else:
+        redact(S["forums"][fid]["index"], ev["event_id"], NOT_A_POST)
+
+
 def sync_filter():
+    rooms = [f["index"] for f in S["forums"].values() if f.get("index")]
+    rooms += [p["room"] for p in S["posts"].values()]
     return {"presence": {"not_types": ["*"]}, "account_data": {"not_types": ["*"]},
-            "room": {"rooms": [f["room"] for f in S["forums"].values() if f.get("room")],
+            "room": {"rooms": rooms,
                      "timeline": {"limit": 50, "types": ["m.room.message", "m.room.redaction"]},
                      "state": {"not_types": ["*"]}, "ephemeral": {"not_types": ["*"]},
                      "account_data": {"not_types": ["*"]}}}
 
 
 def matrix_sync(timeout_ms):
-    """Long-poll the forum rooms as the bridge bot and relay what Matrix
-    users wrote. The first sync only takes a position, so history from
-    before the daemon started is never relayed."""
+    """Long-poll the index and post rooms as the bridge bot: !post in the
+    index, replies in post rooms. The first sync only takes a position, so
+    history from before the daemon started is never acted on."""
     since = S.get("since")
     path = (f"/_matrix/client/v3/sync?timeout={timeout_ms if since else 0}"
             f"&filter={q(json.dumps(sync_filter()))}")
@@ -779,19 +1005,21 @@ def matrix_sync(timeout_ms):
     resp = matrix(path)
     S["since"] = resp["next_batch"]
     if since:
-        rooms = {f["room"]: fid for fid, f in S["forums"].items() if f.get("room")}
+        indexes = {f["index"]: fid for fid, f in S["forums"].items() if f.get("index")}
+        posts = {p["room"]: (tid, p) for tid, p in S["posts"].items()}
         for room, data in resp.get("rooms", {}).get("join", {}).items():
-            if room not in rooms:
-                continue
             for ev in data.get("timeline", {}).get("events", []):
                 try:
-                    relay_event(rooms[room], ev)
+                    if room in indexes:
+                        handle_index_event(indexes[room], ev)
+                    elif room in posts:
+                        relay_event(*posts[room], ev)
                 except Exception as e:
-                    log("ERROR relaying", ev.get("event_id"), repr(e))
-                    if ev["type"] == "m.room.message" and not ev["sender"].startswith("@discord"):
+                    log("ERROR handling", ev.get("event_id"), repr(e))
+                    if room in posts and ev["type"] == "m.room.message" and not ev["sender"].startswith("@discord"):
                         send(room, {"msgtype": "m.notice",
                                     "body": "⚠️ This message could not be delivered to Discord."},
-                             BOT_MXID, relates=reply_rel(ev))
+                             BOT_MXID, relates={"m.in_reply_to": {"event_id": ev["event_id"]}})
     save_state()
 
 
@@ -817,10 +1045,11 @@ def bridged_spaces():
     return spaces
 
 
-def create_forum_room(fid, parent):
-    """The forum's room, built like a bridged channel: '#name', m.bridge
-    state (so onboarding and /join auto-join new accounts), joinable by
-    guild space members, full history for joiners."""
+def create_index_room(fid):
+    """The forum's index room, built like a bridged channel: '#name',
+    m.bridge state (so onboarding and /join auto-join new accounts),
+    joinable by guild space members. Its first message, pinned, explains
+    !post."""
     channel = FORUM_INFO[fid]
     bridge = {"bridgebot": BOT_MXID,
               "protocol": {"id": "discord", "displayname": "Discord",
@@ -830,71 +1059,45 @@ def create_forum_room(fid, parent):
                           "external_url": f"https://discord.com/channels/{GUILD}/{fid}"}}
     key = f"net.gocosmos.forum://discord/{GUILD}/{fid}"
     topic = " · ".join(filter(None, [(channel.get("topic") or "").strip(),
-                                     "Each thread is a Discord forum post: open one to read it and reply"]))
-    room = matrix("/_matrix/client/v3/createRoom", "POST", {
+                                     "Each card opens a post's room",
+                                     "New post: !post Your project name (see the pinned message)"]))
+    index = matrix("/_matrix/client/v3/createRoom", "POST", {
         "name": "#" + channel["name"], "topic": topic,
         "preset": "private_chat", "visibility": "private",
-        "initial_state": [
-            {"type": "m.room.join_rules", "state_key": "",
-             "content": {"join_rule": "restricted",
-                         "allow": [{"type": "m.room_membership", "room_id": GUILD_SPACE}]}},
-            {"type": "m.room.history_visibility", "state_key": "",
-             "content": {"history_visibility": "shared"}},
-            {"type": "m.room.guest_access", "state_key": "", "content": {"guest_access": "forbidden"}},
-            {"type": "m.space.parent", "state_key": parent,
-             "content": {"via": [DOMAIN], "canonical": True}},
+        "initial_state": restricted_state(S["forums"][fid]["parent"]) + [
             {"type": "m.bridge", "state_key": key, "content": bridge},
             {"type": "uk.half-shot.bridge", "state_key": key, "content": bridge},
         ],
         # the admin API join of existing members invites as the (level 0) admin
         "power_level_content_override": {"invite": 0},
     })["room_id"]
-    S["forums"][fid].update(room=room, members=[BOT_MXID])
+    S["forums"][fid]["index"] = index
     save_state()
-    log(f"room created for #{channel['name']}:", room)
-
-
-def join_existing_members(room, source):
-    """Members of the category space get the forum room as new accounts
-    will. The admin API join needs the server admin in the room, so it
-    joins, joins everyone, then leaves."""
-    admin = matrix("/_matrix/client/v3/account/whoami", token=ADMIN_TOKEN)["user_id"]
-    try:
-        matrix(f"/_matrix/client/v3/rooms/{q(room)}/invite", "POST", {"user_id": admin})
-    except urllib.error.HTTPError as e:
-        if e.code != 403:  # still in the room from an interrupted run
-            raise
-    matrix(f"/_matrix/client/v3/rooms/{q(room)}/join", "POST", {}, token=ADMIN_TOKEN)
-    joined = 0
-    for user in matrix(f"/_matrix/client/v3/rooms/{q(source)}/joined_members")["joined"]:
-        if user.startswith("@discord") or user == admin or not user.endswith(":" + DOMAIN):
-            continue
-        try:
-            matrix(f"/_synapse/admin/v1/join/{q(room)}", "POST", {"user_id": user}, token=ADMIN_TOKEN)
-            joined += 1
-        except urllib.error.HTTPError as e:
-            log("could not join", user, e.code)
-    matrix(f"/_matrix/client/v3/rooms/{q(room)}/leave", "POST", {}, token=ADMIN_TOKEN)
-    log(f"joined {joined} existing member(s) to the forum room")
+    pinned = send(index, instructions(fid), BOT_MXID)
+    set_state(index, "m.room.pinned_events", "", {"pinned": [pinned]})
+    log(f"index room created for #{channel['name']}:", index)
 
 
 def setup_forum(fid, spaces):
-    """Create the room, import the history, then link it into the category
-    and join existing members, so nobody sees a half-imported room or gets
-    unread badges for the backfill. Every step resumes after a restart."""
+    """Create the index, import the history, then link the index into the
+    category and join existing members, so nobody sees a half-built list or
+    gets unread badges for the backfill. Every step resumes after a
+    restart."""
     forum = S["forums"].setdefault(fid, {})
-    parent = spaces.get(FORUM_INFO[fid].get("parent_id")) or GUILD_SPACE
-    if not forum.get("room"):
-        create_forum_room(fid, parent)
+    forum["parent"] = spaces.get(FORUM_INFO[fid].get("parent_id")) or GUILD_SPACE
+    if not forum.get("index"):
+        create_index_room(fid)
     ensure_webhook(fid)
     if not forum.get("backfilled"):
         backfill_forum(fid)
     if not forum.get("linked"):
-        set_state(parent, "m.space.child", forum["room"], {"via": [DOMAIN]})
+        set_state(forum["parent"], "m.space.child", forum["index"], {"via": [DOMAIN]})
         forum["linked"] = True
         save_state()
     if not forum.get("members_joined"):
-        join_existing_members(forum["room"], parent)
+        members = matrix(f"/_matrix/client/v3/rooms/{q(forum['parent'])}/joined_members")["joined"]
+        users = [u for u in members if not u.startswith("@discord") and u.endswith(":" + DOMAIN)]
+        log(f"joined {admin_join(forum['index'], users)} existing member(s) to the index room")
         forum["members_joined"] = True
         save_state()
 
