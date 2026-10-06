@@ -11,8 +11,10 @@ listed in FORUM_CHANNELS are mirrored by this daemon instead:
     post changes so updates never notify anyone
   - each post is its own room in the same category space: name = "📌 " +
     title, topic = tags, author and Discord link, avatar = first image of
-    the opening message. Members of the guild space can join any post from
-    its card; nobody is joined automatically
+    the opening message. Post rooms are world_readable, so a card's title
+    (a link to the opening message) shows the post before joining; members
+    of the guild space can then join to reply. Nobody is joined
+    automatically
   - Discord messages are sent by the bridge's own ghosts (@discord_<id>), so
     authors look exactly as they do in the bridged channels
   - Matrix messages, edits and redactions in a post room go back to the post
@@ -162,7 +164,8 @@ def load_state():
         state = {}
     # forums: forum id -> {parent, index, webhook, backfilled, linked, members_joined}
     # posts: thread id -> {forum, origin, room, name, tags, author, text, avatar,
-    #                      count, activity, last, members, card, card_body}
+    #                      count, activity, last, members, opening, readable,
+    #                      card, card_body}
     # d2e / e2d: Discord message id <-> first Matrix event id, both origins
     # relayed: Matrix event ids sent to Discord through the webhook
     # ghosts: ghost user ids known to exist
@@ -313,15 +316,17 @@ def set_state(room, etype, key, content):
     matrix(f"/_matrix/client/v3/rooms/{q(room)}/state/{etype}/{q(key)}", "PUT", content)
 
 
-def restricted_state(parent):
+def restricted_state(parent, history="shared"):
     """Initial state of the index and post rooms: joinable by guild space
-    members, full history for joiners, a canonical parent space."""
+    members, full history for joiners (post rooms are world_readable, so
+    clients can preview a post before joining it), a canonical parent
+    space."""
     return [
         {"type": "m.room.join_rules", "state_key": "",
          "content": {"join_rule": "restricted",
                      "allow": [{"type": "m.room_membership", "room_id": GUILD_SPACE}]}},
         {"type": "m.room.history_visibility", "state_key": "",
-         "content": {"history_visibility": "shared"}},
+         "content": {"history_visibility": history}},
         {"type": "m.room.guest_access", "state_key": "", "content": {"guest_access": "forbidden"}},
         {"type": "m.space.parent", "state_key": parent,
          "content": {"via": [DOMAIN], "canonical": True}},
@@ -463,6 +468,7 @@ def mirror_message(fid, post, msg):
     if first:
         S["d2e"][msg["id"]] = first
         S["e2d"][first] = msg["id"]
+        post.setdefault("opening", first)
 
 
 def fetch_after(channel_id, after):
@@ -507,7 +513,8 @@ def room_avatar(starter):
 
 def create_post_room(fid, tid, post):
     """The post's own room, a child of the forum's category space."""
-    state = restricted_state(S["forums"][fid]["parent"])
+    state = restricted_state(S["forums"][fid]["parent"], "world_readable")
+    post["readable"] = True
     if post.get("avatar"):
         state.append({"type": "m.room.avatar", "state_key": "", "content": {"url": post["avatar"]}})
     post["room"] = matrix("/_matrix/client/v3/createRoom", "POST", {
@@ -551,10 +558,11 @@ def import_post(fid, thread, cutoff_ms):
     if starter:
         mirror_message(fid, post, starter)
     if older:
-        send(post["room"], {"msgtype": "m.notice",
-                            "body": f"Older messages of this post are on Discord: "
-                                    f"https://discord.com/channels/{GUILD}/{tid}"},
-             BOT_MXID, snowflake_ms(tid) + 1)
+        notice = send(post["room"], {"msgtype": "m.notice",
+                                     "body": f"Older messages of this post are on Discord: "
+                                             f"https://discord.com/channels/{GUILD}/{tid}"},
+                      BOT_MXID, snowflake_ms(tid) + 1)
+        post.setdefault("opening", notice)
     mirror_new(fid, tid, post)
     link_post(fid, post)
     update_card(fid, tid, post)
@@ -563,8 +571,17 @@ def import_post(fid, thread, cutoff_ms):
 
 # --- index cards -----------------------------------------------------------
 
+def post_link(post):
+    """Permalink to the post's opening message. Element turns a plain room
+    link in HTML into a pill showing the room id (the card reader has not
+    joined), but keeps an event permalink with its own label as a link."""
+    if post.get("opening"):
+        return f"https://matrix.to/#/{post['room']}/{post['opening']}?via={DOMAIN}"
+    return f"https://matrix.to/#/{post['room']}?via={DOMAIN}"
+
+
 def card_content(fid, tid, post):
-    link = f"https://matrix.to/#/{post['room']}?via={DOMAIN}"
+    link = post_link(post)
     meta = []
     tags = tag_names(fid, post["tags"])
     if tags:
@@ -956,6 +973,7 @@ def create_post(fid, ev):
                                   "format": "org.matrix.custom.html",
                                   "formatted_body": formatted}, BOT_MXID)
     S["d2e"][msg["id"]] = opening
+    post["opening"] = opening
     S["e2d"][opening] = msg["id"]
     link_post(fid, post)
     admin_join(post["room"], [sender])
@@ -1078,6 +1096,22 @@ def create_index_room(fid):
     log(f"index room created for #{channel['name']}:", index)
 
 
+def migrate_posts(fid):
+    """Bring rooms made by earlier versions up to date: post rooms become
+    world_readable and cards link to the opening message."""
+    for tid, post in S["posts"].items():
+        if post["forum"] != fid:
+            continue
+        if not post.get("readable"):
+            set_state(post["room"], "m.room.history_visibility", "",
+                      {"history_visibility": "world_readable"})
+            post["readable"] = True
+        if not post.get("opening") and S["d2e"].get(tid):
+            post["opening"] = S["d2e"][tid]
+        update_card(fid, tid, post)
+    save_state()
+
+
 def setup_forum(fid, spaces):
     """Create the index, import the history, then link the index into the
     category and join existing members, so nobody sees a half-built list or
@@ -1094,6 +1128,7 @@ def setup_forum(fid, spaces):
         set_state(forum["parent"], "m.space.child", forum["index"], {"via": [DOMAIN]})
         forum["linked"] = True
         save_state()
+    migrate_posts(fid)
     if not forum.get("members_joined"):
         members = matrix(f"/_matrix/client/v3/rooms/{q(forum['parent'])}/joined_members")["joined"]
         users = [u for u in members if not u.startswith("@discord") and u.endswith(":" + DOMAIN)]
