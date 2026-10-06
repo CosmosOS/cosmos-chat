@@ -3,7 +3,7 @@
 Status tracker for the Matrix/Element chat zone. Architecture and security
 details live in [docs/secure-chat-zone.md](docs/secure-chat-zone.md).
 
-_Last updated: 2026-08-20_
+_Last updated: 2026-10-06_
 
 ## ✅ Done
 
@@ -169,6 +169,37 @@ _Last updated: 2026-08-20_
   loads) plus a "Use the web app anyway" button that sets Element's
   skip_mobile_redirect sessionStorage flag and lands on /#/welcome, and a
   link to /join for people without an account
+
+- [x] Gen3 Development space deleted (2026-10-06): the Discord category was
+  gone (its #nativeaot-dev and #nativeaot-git channels moved to Archived,
+  the bridge had already dropped its portal), so the orphaned Matrix space
+  was unlinked from the CosmosOS space as the bridge bot and shut down +
+  purged through the admin API (29 members kicked, no aliases). The
+  CosmosOS space now lists 7 categories
+
+- [x] **Matrix invite announced to the whole Discord** (2026-10-06): an
+  @everyone post in #cosmos-announcements, written in the admin's
+  announcement style, invites members to Matrix in response to Discord's
+  global age verification rollout (face scan or ID for some accounts, after
+  the 2025 vendor leak of ~70k ID photos). Members react ✅ on the post
+  itself (added to `ONBOARD_WATCH`) or use /join; the post also names
+  Element X / FluffyChat with homeserver gocosmos.org and asks members to
+  open their server DMs. Posted by the onboarding bot, which needed a
+  channel overwrite on its `Bot` role (Send Messages, Mention @everyone,
+  Manage Messages). A fresh 🧪 onboarding test message was also posted in
+  #staff-bot-cmds and watched
+
+- [x] **Onboarding no longer strands members with closed DMs**: a member
+  whose Discord DMs were closed got a Matrix account (created and joined
+  to 39 rooms) whose password could not be delivered, and the failure was
+  recorded as final. The daemon now sends a first DM before creating
+  anything; if it bounces, the member's ✅ is removed so they can open DMs
+  and react again. Accounts the daemon created whose credentials never
+  arrived get a fresh password on the next attempt (devices logged out),
+  while existing accounts it did not create are never touched (same name
+  is not same person). Other failures retry after a 10 minute back-off
+  instead of being final. The stranded member's state entry was marked as
+  daemon-created and they received their login on the next run
 
 ## ⏭️ Next (in order)
 
