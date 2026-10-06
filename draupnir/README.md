@@ -30,8 +30,10 @@ Configure it from #staff-bot-cmds (Matrix, or Discord through the bridge):
 
 Run the `watch` alone and wait for its ✅: joining that big room over
 federation can take a few minutes. If it times out the room ends up
-*protected* instead of watched (Draupnir protects every room it joins):
-`!draupnir unwatch` it, `!draupnir rooms remove` it, then `watch` again.
+*protected* instead of watched (Draupnir protects every room it joins), and
+Draupnir tries to ban people inside the list room itself. Then run the
+`watch` again, `!draupnir rooms remove` the list (Draupnir leaves it but
+keeps it watched) and `watch` it once more to rejoin.
 
 Then open the rooms: set `DRAUPNIR_MXID=@draupnir:gocosmos.org` in `.env`
 and `docker compose up -d --force-recreate onboarding`.

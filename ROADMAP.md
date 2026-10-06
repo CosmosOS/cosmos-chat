@@ -201,6 +201,35 @@ _Last updated: 2026-10-06_
   instead of being final. The stranded member's state entry was marked as
   daemon-created and they received their login on the next run
 
+- [x] **Open to accounts from other Matrix servers, moderated by Draupnir**
+  (2026-10-06): federation already worked (federation tester green) but
+  matrix.org users got `403 You are not invited` on the CosmosOS space,
+  since every bridged room and space was invite-only, and chat.gocosmos.org
+  only signs in local accounts (`disable_custom_urls`). Now the CosmosOS
+  space is public with the address `#cosmos:gocosmos.org`; the 38 channel
+  and category rooms @everyone sees on Discord are "space members can join";
+  #staff-bot-cmds and the staff only space stay invite-only. The bridge's
+  own `restricted_rooms` option was left off: it would also open private
+  channels. Instead the onboarding daemon (`sync_access`) recomputes
+  @everyone's Discord permissions every 10 minutes, closes a room whose
+  channel turns private, and opens a room only after Draupnir is its admin
+  and member (access token minted through the admin login API per run, not
+  stored). A room someone locked to invite-only stays locked.
+  Draupnir v3.1.0 runs behind the `moderation` compose profile (token in
+  `secrets/`, one-time `scripts/setup-draupnir.sh`), protects every room it
+  is in (58 at launch, forum post rooms included) and takes commands in
+  #staff-bot-cmds, from Matrix or from Discord through the bridge, where
+  invites are now admin-only. On: the Community Moderation Effort ban list
+  (13k users, 101 servers), our own `#cosmos-bans` list, raid lockdown of
+  the space at 50 joins/hour (it only acts on public rooms, hence the
+  space as the single public door), mention limit 10. Off on purpose:
+  flood and first-message-image protections, which cannot exempt the
+  bridge's Discord users. Redactions of relayed messages delete them on
+  Discord too. The forum mirror invites remote `!post` authors (the admin
+  join API is local-only) and no longer mistakes remote `@discord_*` users
+  for bridge ghosts. `@valentinbreiz` is admin of the space, to reopen it
+  after a raid lockdown
+
 ## ⏭️ Next (in order)
 
 - [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org
