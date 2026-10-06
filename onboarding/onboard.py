@@ -5,8 +5,10 @@ ONBOARD_WATCH (comma-separated "channelid:messageid" pairs). For each new
 reactor it:
   1. creates a Matrix account named after their Discord username,
   2. sets the displayname and mirrors their Discord avatar,
-  3. invites the account to every bridged channel (acting as the bridge bot,
-     which is room admin in every portal) and accepts each invite,
+  3. joins the account to every bridged channel they can see on Discord:
+     the guild space first, then the open rooms directly (no invite shown in
+     the channel) and the invite-only ones through an invite from the bridge
+     bot, which is room admin in every portal,
   4. DMs the reactor their credentials and the Element URL.
 
 A first DM is sent before anything is created: members whose DMs are closed
@@ -19,8 +21,11 @@ Once DRAUPNIR_MXID is set it also opens the community to Matrix accounts
 from other servers, every 10 minutes (sync_access): the guild space is
 public, the rooms @everyone can see on Discord are joinable by its members,
 staff rooms stay invite-only, and Draupnir moderates every open room.
-Pure stdlib, no dependencies.
+New members of the guild space are greeted in the welcome room
+(welcome_new), the one place showing arrivals. Pure stdlib, no
+dependencies.
 """
+import html
 import json
 import os
 import re
@@ -48,6 +53,8 @@ RETRY_SECONDS = 600
 DRAUPNIR = os.environ.get("DRAUPNIR_MXID", "")
 ACCESS_STATE = "/state/access.json"
 ACCESS_SECONDS = 600
+WELCOME_STATE = "/state/welcome.json"
+WELCOME_LOOKUP_SECONDS = 3600  # how often the welcome room is looked up again
 
 
 def log(*args):
@@ -89,15 +96,16 @@ def matrix(path, method="GET", body=None, token=None, as_user=None):
                 {"Authorization": "Bearer " + (token or ADMIN_TOKEN)})
 
 
-def load_state(path=STATE):
+def load_state(path=None):
     try:
-        with open(path) as f:
+        with open(path or STATE) as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 
-def save_state(state, path=STATE):
+def save_state(state, path=None):
+    path = path or STATE
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(state, f, indent=1)
@@ -192,19 +200,54 @@ def bridged_rooms(visible):
     """Bridged rooms (channel portals + guild/category spaces) the target
     user may see per Discord permissions. visible is the permitted Discord
     channel id set, or None for see-everything. Rooms without bridge info
-    state (the bridge's personal spaces) are never included."""
+    state (the bridge's personal spaces) are never included. The guild space
+    comes first: its members can then join the open rooms without invite."""
     rooms = []
     for room, state in bot_rooms():
         create_type, name, cid = portal_info(state)
         if cid is None:
             continue
         if create_type == "m.space":
-            if cid == GUILD or visible is None or cid in visible:
+            if cid == GUILD:
+                rooms.insert(0, (room, "space"))
+            elif visible is None or cid in visible:
                 rooms.append((room, "space"))
         elif name.startswith("#"):
             if visible is None or cid in visible:
                 rooms.append((room, name))
     return rooms
+
+
+def join_bridged(room, name, mxid, user_token):
+    """Join the account to a bridged room. Open rooms are joined directly, so
+    the channel shows no invite; invite-only ones (staff rooms, or rooms
+    Draupnir locked) get an invite from the bridge bot first."""
+    rq = quote(room, safe="")
+    invited = False
+    for _ in range(8):
+        try:
+            matrix(f"/_matrix/client/v3/rooms/{rq}/join", "POST", {}, token=user_token)
+            return True
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                try:
+                    wait = json.loads(e.read()).get("retry_after_ms", 2000) / 1000
+                except Exception:
+                    wait = 2
+                time.sleep(min(wait + 0.1, 15))
+                continue
+            if e.code != 403 or invited:
+                log("join failed:", name, e.code)
+                return False
+        try:
+            matrix(f"/_matrix/client/v3/rooms/{rq}/invite", "POST",
+                   {"user_id": mxid}, token=AS_TOKEN, as_user=BOT_MXID)
+        except urllib.error.HTTPError as e:
+            log("invite failed:", name, e.code)
+            return False
+        invited = True
+    log("join gave up after retries:", name)
+    return False
 
 
 def ensure_moderator(room, state, session):
@@ -297,6 +340,59 @@ def sync_access(access):
                 pass
 
 
+def find_welcome():
+    """(guild space, welcome room): the bridged room of the channel Discord
+    posts its join messages in (the guild's system channel), else the one
+    named #welcome. None when either is missing."""
+    system = discord(f"/guilds/{GUILD}").get("system_channel_id")
+    space = by_cid = by_name = None
+    for room, state in bot_rooms():
+        create_type, name, cid = portal_info(state)
+        if create_type == "m.space" and cid == GUILD:
+            space = room
+        elif cid and cid == system:
+            by_cid = room
+        elif name == "#welcome":
+            by_name = room
+    welcome = by_cid or by_name
+    return (space, welcome) if space and welcome else None
+
+
+def welcome_new(welcome, rooms):
+    """Greets each new member of the guild space in the welcome room, like
+    Discord's join messages: one place for arrivals instead of join events
+    in every channel (Element hides those by default, element/config.json).
+    Posted by the bridge bot, which the bridge never relays to Discord, so
+    Discord's own join message is not doubled. The first run only records
+    the current members."""
+    space, room = rooms
+    members = matrix(f"/_matrix/client/v3/rooms/{quote(space, safe='')}/joined_members",
+                     token=AS_TOKEN, as_user=BOT_MXID)["joined"]
+    people = {user: m.get("display_name") or user for user, m in members.items()
+              if user not in (BOT_MXID, DRAUPNIR)
+              and not (user.startswith("@discord_") and user.endswith(":" + DOMAIN))}
+    if "welcomed" not in welcome:
+        welcome["welcomed"] = sorted(people)
+        return
+    seen = set(welcome["welcomed"])
+    for user, name in people.items():
+        if user in seen:
+            continue
+        server = user.split(":", 1)[1]
+        origin = "" if server == DOMAIN else f" (from {server})"
+        link = f'<a href="https://matrix.to/#/{user}">{html.escape(name)}</a>'
+        txn = f"welcome{int(time.time() * 1000)}{len(welcome['welcomed'])}"
+        matrix(f"/_matrix/client/v3/rooms/{quote(room, safe='')}/send/m.room.message/{txn}",
+               "PUT", {"msgtype": "m.text",
+                       "body": f"👋 Welcome {name}{origin} to Cosmos!",
+                       "format": "org.matrix.custom.html",
+                       "formatted_body": f"👋 Welcome {link}{html.escape(origin)} to Cosmos!",
+                       "m.mentions": {}},  # greet without pinging
+               token=AS_TOKEN, as_user=BOT_MXID)
+        log("welcomed", user)
+        welcome["welcomed"].append(user)  # kept even if a later greeting fails
+
+
 def process(user, state):
     uid, uname = user["id"], user["username"]
     localpart = re.sub(r"[^a-z0-9._=\-]", ".", uname.lower())
@@ -356,33 +452,10 @@ def process(user, state):
     override = f"/_synapse/admin/v1/users/{quote(mxid, safe='')}/override_ratelimit"
     matrix(override, "POST", {"messages_per_second": 0, "burst_count": 0})
 
-    joined = 0
     # Only the channels this Discord member can actually see: staff get the
     # staff rooms, everyone else gets the public ones
-    for room, name in bridged_rooms(visible_channel_ids(member)):
-        rq = quote(room, safe="")
-        try:
-            matrix(f"/_matrix/client/v3/rooms/{rq}/invite", "POST",
-                   {"user_id": mxid}, token=AS_TOKEN, as_user=BOT_MXID)
-        except urllib.error.HTTPError as e:
-            log("invite failed:", name, e.code)
-        for _ in range(6):
-            try:
-                matrix(f"/_matrix/client/v3/rooms/{rq}/join", "POST", {}, token=user_token)
-                joined += 1
-                break
-            except urllib.error.HTTPError as e:
-                if e.code == 429:
-                    try:
-                        wait = json.loads(e.read()).get("retry_after_ms", 2000) / 1000
-                    except Exception:
-                        wait = 2
-                    time.sleep(min(wait + 0.1, 15))
-                    continue
-                log("join failed:", name, e.code)
-                break
-        else:
-            log("join gave up after retries:", name)
+    joined = sum(join_bridged(room, name, mxid, user_token)
+                 for room, name in bridged_rooms(visible_channel_ids(member)))
 
     matrix(override, "DELETE")
     dm(uid,
@@ -425,6 +498,7 @@ def main():
         + (f"on, moderated by {DRAUPNIR}" if DRAUPNIR else "off (DRAUPNIR_MXID unset)"))
     retry_at = {}  # Discord user id -> earliest next attempt after a failure
     next_access = 0
+    welcome, welcome_rooms, next_lookup = load_state(WELCOME_STATE), None, 0
     while True:
         if DRAUPNIR and time.time() >= next_access:
             next_access = time.time() + ACCESS_SECONDS
@@ -433,6 +507,21 @@ def main():
             except Exception as e:
                 log("ERROR syncing room access", repr(e))
             save_state(access, ACCESS_STATE)
+        try:
+            if time.time() >= next_lookup:
+                next_lookup = time.time() + WELCOME_LOOKUP_SECONDS
+                welcome_rooms = find_welcome()
+                if not welcome_rooms:
+                    log("no guild space or welcome room found, not greeting")
+            if welcome_rooms:
+                try:
+                    welcome_new(welcome, welcome_rooms)
+                finally:
+                    save_state(welcome, WELCOME_STATE)
+        except Exception as e:
+            log("ERROR greeting new members", repr(e))
+            # the rooms may have changed: look them up again soon
+            next_lookup = min(next_lookup, time.time() + 300)
         for watch in WATCH:
             channel_id, message_id = watch.split(":", 1)
             try:

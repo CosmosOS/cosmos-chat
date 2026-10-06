@@ -231,6 +231,22 @@ _Last updated: 2026-10-06_
   for bridge ghosts. `@valentinbreiz` is admin of the space, to reopen it
   after a raid lockdown
 
+- [x] **Arrivals in #welcome only, like Discord** (2026-10-06): every
+  channel was cluttered with "was invited / joined / changed their profile
+  picture" lines. Membership events cannot be moved out of a room (Matrix
+  needs them for permissions), so: chat.gocosmos.org now hides join/leave,
+  avatar and display name changes by default (`setting_defaults` in
+  `element/config.json`, per member override still possible; other apps
+  keep their own settings); the onboarding daemon and the /join page join
+  new accounts to the guild space first, then to the open channels
+  directly, so no invite event appears (only invite-only staff rooms, or
+  rooms Draupnir locked, still get one); and the onboarding daemon greets
+  each new member of the space ("👋 Welcome X (from matrix.org) to
+  Cosmos!", no ping) in the room of Discord's system channel, else
+  #welcome. The greeting is posted by the bridge bot, which the bridge
+  never relays, so Discord's own join message is not doubled. The first
+  run records existing members without greeting them
+
 ## ⏭️ Next (in order)
 
 - [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org

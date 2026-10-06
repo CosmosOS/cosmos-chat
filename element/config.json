@@ -13,5 +13,10 @@
   "disable_guests": true,
   "disable_custom_urls": true,
   "show_labs_settings": false,
-  "mobile_guide_toast": false
+  "mobile_guide_toast": false,
+  "setting_defaults": {
+    "showJoinLeaves": false,
+    "showAvatarChanges": false,
+    "showDisplaynameChanges": false
+  }
 }

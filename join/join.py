@@ -214,7 +214,8 @@ def bridged_rooms(visible):
     """Bridged rooms (channel portals + guild/category spaces) the target
     user may see per Discord permissions. visible is the permitted Discord
     channel id set, or None for see-everything. Rooms without bridge info
-    state (the bridge's personal spaces) are never included."""
+    state (the bridge's personal spaces) are never included. The guild space
+    comes first: its members can then join the open rooms without invite."""
     rooms = []
     for room in matrix("/_matrix/client/v3/joined_rooms", token=AS_TOKEN,
                        as_user=BOT_MXID)["joined_rooms"]:
@@ -235,7 +236,9 @@ def bridged_rooms(visible):
         if cid is None:
             continue
         if create_type == "m.space":
-            if cid == GUILD or visible is None or cid in visible:
+            if cid == GUILD:
+                rooms.insert(0, (room, "space"))
+            elif visible is None or cid in visible:
                 rooms.append((room, "space"))
         elif (name or "").startswith("#"):
             if visible is None or cid in visible:
@@ -243,41 +246,50 @@ def bridged_rooms(visible):
     return rooms
 
 
+def join_bridged(room, name, mxid, user_token):
+    """Join the account to a bridged room. Open rooms are joined directly, so
+    the channel shows no invite; invite-only ones (rooms Draupnir locked) get
+    an invite from the bridge bot first."""
+    rq = quote(room, safe="")
+    invited = False
+    for _ in range(8):
+        try:
+            matrix(f"/_matrix/client/v3/rooms/{rq}/join", "POST", {}, token=user_token)
+            return True
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                try:
+                    wait = json.loads(e.read()).get("retry_after_ms", 2000) / 1000
+                except Exception:
+                    wait = 2
+                time.sleep(min(wait + 0.1, 15))
+                continue
+            if e.code != 403 or invited:
+                log("join failed:", name, e.code)
+                return False
+        try:
+            matrix(f"/_matrix/client/v3/rooms/{rq}/invite", "POST",
+                   {"user_id": mxid}, token=AS_TOKEN, as_user=BOT_MXID)
+        except urllib.error.HTTPError as e:
+            log("invite failed:", name, e.code)
+            return False
+        invited = True
+    log("join gave up after retries:", name)
+    return False
+
+
 def auto_join(mxid, user_token):
-    """Invite the account to every bridged room as the bridge bot and accept
-    each invite, mirroring the Discord reaction onboarding. Runs in a
-    background thread so the signup response stays instant."""
+    """Join the account to every bridged room @everyone can see, mirroring
+    the Discord reaction onboarding. Runs in a background thread so the
+    signup response stays instant."""
     visible = visible_channel_ids()  # no Discord identity: @everyone only
     override = f"/_synapse/admin/v1/users/{quote(mxid, safe='')}/override_ratelimit"
     matrix(override, "POST", {"messages_per_second": 0, "burst_count": 0},
            token=ADMIN_TOKEN)
     joined = 0
     try:
-        for room, name in bridged_rooms(visible):
-            rq = quote(room, safe="")
-            try:
-                matrix(f"/_matrix/client/v3/rooms/{rq}/invite", "POST",
-                       {"user_id": mxid}, token=AS_TOKEN, as_user=BOT_MXID)
-            except urllib.error.HTTPError as e:
-                log("invite failed:", name, e.code)
-            for _ in range(6):
-                try:
-                    matrix(f"/_matrix/client/v3/rooms/{rq}/join", "POST", {},
-                           token=user_token)
-                    joined += 1
-                    break
-                except urllib.error.HTTPError as e:
-                    if e.code == 429:
-                        try:
-                            wait = json.loads(e.read()).get("retry_after_ms", 2000) / 1000
-                        except Exception:
-                            wait = 2
-                        time.sleep(min(wait + 0.1, 15))
-                        continue
-                    log("join failed:", name, e.code)
-                    break
-            else:
-                log("join gave up after retries:", name)
+        joined = sum(join_bridged(room, name, mxid, user_token)
+                     for room, name in bridged_rooms(visible))
     finally:
         try:
             matrix(override, "DELETE", token=ADMIN_TOKEN)

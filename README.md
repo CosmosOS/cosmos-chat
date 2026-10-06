@@ -107,6 +107,12 @@ minutes, and only opens a room once Draupnir moderates it
 (`draupnir/README.md`). chat.gocosmos.org itself only signs in gocosmos.org
 accounts.
 
+Arrivals show in one place, like on Discord: the onboarding daemon greets
+every new member of the space in #welcome, and chat.gocosmos.org hides
+join/leave, avatar and name changes by default (`setting_defaults` in
+`element/config.json`, each member can turn them back on). New accounts
+join the open channels directly, so no invite shows up in them.
+
 ## Repo layout
 
 ```
