@@ -31,7 +31,8 @@ days of replies (a notice links older ones on Discord). A post revived later
 is imported the same way. Discord is polled every POLL_SECONDS, so message
 edits and deletions made on Discord are not mirrored; a post deleted on
 Discord takes its card and room with it (checked when it leaves the active
-list, and hourly for every post). State lives in
+list, and hourly for every post; the room is emptied at once and purged a
+week later). State lives in
 /state/forum-index.json. Pure stdlib, no dependencies.
 """
 import base64
@@ -64,6 +65,10 @@ STATE = "/state/forum-index.json"
 UA = "CosmosForum (https://gocosmos.org, 1.0)"
 POLL_SECONDS = 30
 DELETE_CHECK_SECONDS = 3600  # how often every known post is checked for deletion
+# A deleted post's room is emptied at once and purged later: purging right
+# away also erases the kick events, so clients that had not synced yet keep
+# a dead room they cannot even leave
+PURGE_DELAY = 7 * 86400
 MATRIX_MAX_UPLOAD = 20 * 1024 * 1024  # synapse max_upload_size
 DISCORD_MAX_UPLOAD = 10 * 1024 * 1024  # webhook attachment limit without boosts
 BOT_MXID = f"@discordbot:{DOMAIN}"
@@ -176,7 +181,8 @@ def load_state():
     # ghosts: ghost user ids known to exist
     # pending: Matrix user -> refused !post event ids to clean up on success
     # cooldown: Matrix user -> time of their last !post
-    for key in ("forums", "posts", "d2e", "e2d", "relayed", "ghosts", "pending", "cooldown"):
+    # purge: room of a deleted post -> when to purge it
+    for key in ("forums", "posts", "d2e", "e2d", "relayed", "ghosts", "pending", "cooldown", "purge"):
         state.setdefault(key, {})
     return state
 
@@ -652,7 +658,8 @@ def post_exists(tid):
 
 def remove_post(fid, tid, post):
     """A post deleted on Discord: drop its card, unlink its room from the
-    space and delete the room."""
+    space and shut the room down (everyone is removed), purging it after
+    PURGE_DELAY."""
     if post.get("card"):
         try:
             redact(S["forums"][fid]["index"], post["card"], "Post deleted on Discord")
@@ -661,10 +668,25 @@ def remove_post(fid, tid, post):
     set_state(S["forums"][fid]["parent"], "m.space.child", post["room"], {})
     del S["posts"][tid]
     CHANNELS.pop(tid, None)
+    S["purge"][post["room"]] = time.time() + PURGE_DELAY
     save_state()
     matrix(f"/_synapse/admin/v2/rooms/{q(post['room'])}", "DELETE",
-           {"purge": True, "block": False}, token=ADMIN_TOKEN)
-    log("post deleted on Discord, room removed:", post["name"])
+           {"purge": False, "block": False}, token=ADMIN_TOKEN)
+    log("post deleted on Discord, room shut down:", post["name"])
+
+
+def purge_due():
+    for room, due in list(S["purge"].items()):
+        if time.time() < due:
+            continue
+        try:
+            matrix(f"/_synapse/admin/v2/rooms/{q(room)}", "DELETE",
+                   {"purge": True, "block": False}, token=ADMIN_TOKEN)
+        except urllib.error.HTTPError as e:
+            log("could not purge", room, e.code)
+            continue
+        del S["purge"][room]
+        save_state()
 
 
 def check_deleted(active):
@@ -1224,6 +1246,7 @@ def main():
         if time.time() >= next_refresh:
             try:
                 refresh_guild()
+                purge_due()
             except Exception as e:
                 log("ERROR refreshing guild info", repr(e))
             next_refresh = time.time() + 3600
