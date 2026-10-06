@@ -5,10 +5,11 @@ homeserverUrl: "http://synapse:8008"
 rawHomeserverUrl: "http://synapse:8008"
 dataPath: "/data/storage"
 
-# Everyone in this room can command Draupnir: invite trusted moderators only.
-# Created by scripts/setup-draupnir.sh (unencrypted: Draupnir runs without
-# E2EE support).
-managementRoom: "#moderation:gocosmos.org"
+# Everyone in this room can command Draupnir. It is #staff-bot-cmds, the
+# bridged staff channel (unencrypted, which Draupnir needs): staff command it
+# from Matrix or from Discord, and its replies show on both sides.
+# scripts/setup-draupnir.sh joins it there and limits invites to admins.
+managementRoom: "!SCclVdOnANJSSBTzmO:gocosmos.org"
 
 # Invites are only accepted from management room members
 autojoinOnlyIfManager: true

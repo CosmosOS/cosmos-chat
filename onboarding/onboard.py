@@ -223,13 +223,17 @@ def ensure_moderator(room, state, session):
         session["token"] = matrix(
             f"/_synapse/admin/v1/users/{quote(DRAUPNIR, safe='')}/login", "POST",
             {"valid_until_ms": int(time.time() * 1000) + 3600_000})["access_token"]
-    try:
+    join = f"/_matrix/client/v3/rooms/{rq}/join"
+    try:  # restricted rooms let it in as a guild space member, no invite
+        matrix(join, "POST", {}, token=session["token"])
+    except urllib.error.HTTPError as e:
+        if e.code != 403:
+            raise
+        # an invite also makes Draupnir post a "not a manager" notice in its
+        # management room, so it is only sent for rooms still invite-only
         matrix(f"/_matrix/client/v3/rooms/{rq}/invite", "POST",
                {"user_id": DRAUPNIR}, token=AS_TOKEN, as_user=BOT_MXID)
-    except urllib.error.HTTPError as e:
-        if e.code != 403:  # already invited
-            raise
-    matrix(f"/_matrix/client/v3/rooms/{rq}/join", "POST", {}, token=session["token"])
+        matrix(join, "POST", {}, token=session["token"])
     log("Draupnir joined", state_content(state, "m.room.name").get("name", room))
 
 

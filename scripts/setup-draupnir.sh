@@ -1,11 +1,12 @@
 #!/bin/bash
 # One-time Draupnir setup, run on the VPS as the chat user from
 # ~/cosmos-chat (see draupnir/README.md):
-#   ./scripts/setup-draupnir.sh @moderator:gocosmos.org
+#   ./scripts/setup-draupnir.sh @moderator:gocosmos.org '!managementroom:gocosmos.org'
 # 1. registers @draupnir (not a server admin) and writes its access token to
 #    secrets/draupnir-access-token, lifts its ratelimit (mass bans),
-# 2. creates its management room #moderation:gocosmos.org (invite-only,
-#    unencrypted) and invites the moderator as room admin,
+# 2. joins it as admin to its management room (managementRoom in
+#    draupnir/production.yaml, an unencrypted bridged staff channel), where
+#    only admins may invite from now on: every member can command Draupnir,
 # 3. gives the guild space the address #cosmos:gocosmos.org and makes the
 #    moderator its admin, so they can reopen it after Draupnir's raid
 #    protection locked it.
@@ -13,7 +14,7 @@
 set -e
 cd "$(dirname "$0")/.."
 set -a; . ./.env; set +a
-python3 - "${1:?usage: $0 @moderator:gocosmos.org}" <<'PY'
+python3 - "${1:?usage: $0 @moderator:gocosmos.org '!managementroom:gocosmos.org'}" "${2:?management room id}" <<'PY'
 import hashlib, hmac, json, os, secrets, sys, urllib.error, urllib.request
 from urllib.parse import quote
 
@@ -23,7 +24,7 @@ ADMIN, AS = os.environ["ONBOARD_ADMIN_TOKEN"], os.environ["BRIDGE_AS_TOKEN"]
 BOT = f"@discordbot:{DOMAIN}"
 MXID = f"@draupnir:{DOMAIN}"
 TOKEN_FILE = "secrets/draupnir-access-token"
-moderator = sys.argv[1]
+moderator, room = sys.argv[1], sys.argv[2]
 
 
 def call(path, method="GET", body=None, token=ADMIN, as_bot=False):
@@ -64,26 +65,18 @@ call(f"/_synapse/admin/v1/users/{q(MXID)}/override_ratelimit", "POST",
      {"messages_per_second": 0, "burst_count": 0})
 print("ratelimit lifted")
 
-# 2. management room
-alias = f"#moderation:{DOMAIN}"
-try:
-    room = call(f"/_matrix/client/v3/directory/room/{q(alias)}")["room_id"]
-    print("management room exists:", room)
-except urllib.error.HTTPError as e:
-    if e.code != 404:
-        raise
-    room = call("/_matrix/client/v3/createRoom", "POST", {
-        "preset": "private_chat",
-        "room_alias_name": "moderation",
-        "name": "Draupnir moderation",
-        "topic": "Commands for Draupnir, the moderation bot of the Cosmos rooms. "
-                 "Everyone here can command it: invite trusted moderators only. Type !draupnir help",
-        "invite": [moderator],
-        "power_level_content_override": {"users": {MXID: 100, moderator: 100}},
-        "initial_state": [{"type": "m.room.guest_access", "state_key": "",
-                           "content": {"guest_access": "forbidden"}}],
-    }, token)["room_id"]
-    print("management room created:", room, alias, "- invited", moderator)
+# 2. management room: Draupnir joined as admin, invites limited to admins
+pl = call(f"/_matrix/client/v3/rooms/{q(room)}/state/m.room.power_levels", token=AS, as_bot=True)
+if pl.get("users", {}).get(MXID, 0) < 100 or pl.get("invite", 0) < 50:
+    pl.setdefault("users", {})[MXID] = 100
+    pl["invite"] = max(pl.get("invite", 0), 50)
+    call(f"/_matrix/client/v3/rooms/{q(room)}/state/m.room.power_levels", "PUT", pl,
+         token=AS, as_bot=True)
+if room not in call("/_matrix/client/v3/joined_rooms", token=token)["joined_rooms"]:
+    call(f"/_matrix/client/v3/rooms/{q(room)}/invite", "POST", {"user_id": MXID},
+         token=AS, as_bot=True)
+    call(f"/_matrix/client/v3/rooms/{q(room)}/join", "POST", {}, token=token)
+print("management room", room, "joined, Draupnir admin, invites limited to admins")
 
 # 3. guild space address and admin
 guild = os.environ["GUILD_ID"]

@@ -9,15 +9,16 @@ before that room opens to Matrix accounts from other servers.
 
 ```bash
 cd ~/cosmos-chat
-# @draupnir account + token in secrets/, #moderation:gocosmos.org management
-# room, #cosmos:gocosmos.org address on the guild space, the moderator as
-# admin of both
-./scripts/setup-draupnir.sh @valentinbreiz:gocosmos.org
+# @draupnir account + token in secrets/, admin of its management room
+# (#staff-bot-cmds, where only admins may invite from now on: every member
+# can command it), #cosmos:gocosmos.org address on the guild space with the
+# moderator as its admin
+./scripts/setup-draupnir.sh @valentinbreiz:gocosmos.org '!SCclVdOnANJSSBTzmO:gocosmos.org'
 # run it: add "moderation" to COMPOSE_PROFILES in .env
 docker compose up -d draupnir
 ```
 
-Accept the invite to **Draupnir moderation** and configure it there:
+Configure it from #staff-bot-cmds (Matrix, or Discord through the bridge):
 
 ```
 !draupnir list create cosmos cosmos-bans
@@ -26,6 +27,11 @@ Accept the invite to **Draupnir moderation** and configure it there:
 !draupnir protections enable MentionLimitProtection
 !draupnir protections config set MentionLimitProtection maxMentions 10
 ```
+
+Run the `watch` alone and wait for its ✅: joining that big room over
+federation can take a few minutes. If it times out the room ends up
+*protected* instead of watched (Draupnir protects every room it joins):
+`!draupnir unwatch` it, `!draupnir rooms remove` it, then `watch` again.
 
 Then open the rooms: set `DRAUPNIR_MXID=@draupnir:gocosmos.org` in `.env`
 and `docker compose up -d --force-recreate onboarding`.
@@ -50,7 +56,7 @@ Off on purpose: `BasicFloodingProtection` and `FirstMessageIsImageProtection`
 cannot exempt anyone, so they would ban the bridge's Discord users (a Discord
 member whose first bridged message is an image, a fast burst of attachments).
 
-## Everyday use (in the management room)
+## Everyday use (in #staff-bot-cmds, on Matrix or Discord)
 
 ```
 !draupnir ban @spammer:example.org cosmos spam   # every protected room
