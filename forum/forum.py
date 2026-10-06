@@ -28,8 +28,10 @@ listed in FORUM_CHANNELS are mirrored by this daemon instead:
 The first time a forum is seen, every post with activity in the last
 FORUM_BACKFILL_DAYS days is imported: its opening message plus that many
 days of replies (a notice links older ones on Discord). A post revived later
-is imported the same way. Discord is polled every POLL_SECONDS, so edits and
-deletions made on Discord are not mirrored. State lives in
+is imported the same way. Discord is polled every POLL_SECONDS, so message
+edits and deletions made on Discord are not mirrored; a post deleted on
+Discord takes its card and room with it (checked when it leaves the active
+list, and hourly for every post). State lives in
 /state/forum-index.json. Pure stdlib, no dependencies.
 """
 import base64
@@ -61,6 +63,7 @@ PUBLIC_ADDRESS = os.environ.get("BRIDGE_PUBLIC_ADDRESS", "https://matrix.gocosmo
 STATE = "/state/forum-index.json"
 UA = "CosmosForum (https://gocosmos.org, 1.0)"
 POLL_SECONDS = 30
+DELETE_CHECK_SECONDS = 3600  # how often every known post is checked for deletion
 MATRIX_MAX_UPLOAD = 20 * 1024 * 1024  # synapse max_upload_size
 DISCORD_MAX_UPLOAD = 10 * 1024 * 1024  # webhook attachment limit without boosts
 BOT_MXID = f"@discordbot:{DOMAIN}"
@@ -72,6 +75,8 @@ FORUM_INFO = {}   # forum channel id -> Discord channel object (tags, name)
 ROLES = {}        # Discord role id -> name, for <@&id> mentions
 CHANNELS = {}     # Discord channel id -> name, for <#id> mentions
 GUILD_SPACE = ""  # the bridge's space for the whole guild
+LAST_ACTIVE = set()  # post ids in Discord's active list at the previous poll
+NEXT_DELETE_CHECK = [0]
 
 
 def log(*args):
@@ -635,12 +640,59 @@ def refresh_post(fid, tid, post, thread):
     save_state()
 
 
+def post_exists(tid):
+    try:
+        discord(f"/channels/{tid}")
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code == 404:  # Unknown Channel: the post was deleted on Discord
+            return False
+        raise
+
+
+def remove_post(fid, tid, post):
+    """A post deleted on Discord: drop its card, unlink its room from the
+    space and delete the room."""
+    if post.get("card"):
+        try:
+            redact(S["forums"][fid]["index"], post["card"], "Post deleted on Discord")
+        except urllib.error.HTTPError as e:
+            log("could not remove card:", e.code)
+    set_state(S["forums"][fid]["parent"], "m.space.child", post["room"], {})
+    del S["posts"][tid]
+    CHANNELS.pop(tid, None)
+    save_state()
+    matrix(f"/_synapse/admin/v2/rooms/{q(post['room'])}", "DELETE",
+           {"purge": True, "block": False}, token=ADMIN_TOKEN)
+    log("post deleted on Discord, room removed:", post["name"])
+
+
+def check_deleted(active):
+    """Posts that just left Discord's active list (archived or deleted) are
+    checked at once, every known post once an hour."""
+    global LAST_ACTIVE
+    if time.time() >= NEXT_DELETE_CHECK[0]:
+        suspects = [tid for tid in S["posts"] if tid not in active]
+        NEXT_DELETE_CHECK[0] = time.time() + DELETE_CHECK_SECONDS
+    else:
+        suspects = [tid for tid in LAST_ACTIVE - active if tid in S["posts"]]
+    LAST_ACTIVE = active
+    for tid in suspects:
+        try:
+            if not post_exists(tid):
+                post = S["posts"][tid]
+                remove_post(post["forum"], tid, post)
+        except Exception as e:
+            log("ERROR checking post", tid, repr(e))
+
+
 def poll_discord():
     cutoff = time.time() * 1000 - BACKFILL_DAYS * 86400000
-    for thread in discord(f"/guilds/{GUILD}/threads/active")["threads"]:
-        fid = thread.get("parent_id")
-        if fid not in FORUMS:
-            continue
+    threads = [t for t in discord(f"/guilds/{GUILD}/threads/active")["threads"]
+               if t.get("parent_id") in FORUMS]
+    check_deleted({t["id"] for t in threads})
+    for thread in threads:
+        fid = thread["parent_id"]
         tid = thread["id"]
         post = S["posts"].get(tid)
         try:
