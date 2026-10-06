@@ -645,6 +645,8 @@ def poll_discord():
         post = S["posts"].get(tid)
         try:
             if post is None:  # a new post, or an old one revived by a reply
+                if snowflake_ms(thread.get("last_message_id") or tid) < cutoff:
+                    continue  # never archived on Discord, but quiet for longer than the window
                 import_post(fid, thread, cutoff)
             else:
                 refresh_post(fid, tid, post, thread)
