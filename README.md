@@ -28,7 +28,7 @@ OWASP Docker Top 10.
 | mautrix-discord | `dock.mau.dev/mautrix/discord` | Discord ↔ Matrix bridge (relay mode via webhooks) |
 | Onboarding | `python:3.13-slim` | Discord reaction → auto-created Matrix account (`onboarding/onboard.py`) |
 | Join page | `python:3.13-slim` | Public signup at `/join` behind a self-hosted ALTCHA captcha (`join/join.py`) |
-| Forum mirror | `python:3.13-slim` | Discord forum channels as a Matrix sub-space, one room per post, replies both ways (`forum/forum.py`) |
+| Forum mirror | `python:3.13-slim` | Discord forum channels as threaded Matrix rooms (one thread per post), replies both ways (`forum/forum.py`) |
 
 Security highlights: images pinned by sha256 digest, `cap_drop: ALL`,
 `no-new-privileges`, read-only root filesystems, memory/pid limits, an
@@ -105,7 +105,7 @@ postgres/                 # first-boot init script (bridge DB)
 bridge/                   # mautrix-discord setup guide (configs generated, gitignored)
 onboarding/onboard.py     # Discord reaction -> Matrix account daemon
 join/                     # public signup page (ALTCHA captcha + vendored widget)
-forum/forum.py            # Discord forum -> Matrix sub-space mirror (one room per post)
+forum/forum.py            # Discord forum -> threaded Matrix room mirror (one thread per post)
 wellknown/                # files served at gocosmos.org/.well-known/matrix/
 scripts/gen-secrets.sh    # creates .env + homeserver.yaml with random secrets
 docs/secure-chat-zone.md  # architecture & threat-model documentation

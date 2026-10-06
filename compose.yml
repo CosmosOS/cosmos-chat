@@ -177,7 +177,7 @@ services:
     command: ["python", "-u", "/app/forum.py"]
     environment:
       # mautrix-discord skips forum channels: these are mirrored as one
-      # Matrix room per post (see forum/forum.py)
+      # threaded Matrix room each, one thread per post (see forum/forum.py)
       FORUM_CHANNELS: ${FORUM_CHANNELS:-1087332637301014548}
       FORUM_BACKFILL_DAYS: ${FORUM_BACKFILL_DAYS:-60}
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
