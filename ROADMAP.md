@@ -217,7 +217,8 @@ _Last updated: 2026-10-06_
   stored). A room someone locked to invite-only stays locked.
   Draupnir v3.1.0 runs behind the `moderation` compose profile (token in
   `secrets/`, one-time `scripts/setup-draupnir.sh`), protects every room it
-  is in (58 at launch, forum post rooms included) and takes commands in
+  is in (58 at launch, forum post rooms included), shows as Terminator,
+  and takes commands in
   #staff-bot-cmds, from Matrix or from Discord through the bridge, where
   invites are now admin-only. On: the Community Moderation Effort ban list
   (13k users, 101 servers), our own `#cosmos-bans` list, raid lockdown of
