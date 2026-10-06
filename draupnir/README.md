@@ -3,9 +3,9 @@
 [Draupnir](https://github.com/the-draupnir-project/Draupnir) protects every
 room it is in. It shows as **Terminator** (`@draupnir:gocosmos.org`); its
 protection settings live as state events in its management room, so they
-must be set again if that room ever changes. The onboarding daemon (`sync_access` in
-`onboarding/onboard.py`) makes it admin of each room and joins it there
-before that room opens to Matrix accounts from other servers.
+must be set again if that room ever changes. The onboarding daemon
+(`sync_access` in `onboarding/onboard.py`) makes it admin of each room and
+joins it there before that room opens to Matrix accounts from other servers.
 
 ## Setup (once, on the VPS as the chat user)
 
