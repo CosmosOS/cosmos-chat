@@ -97,9 +97,8 @@ for r in call("/_matrix/client/v3/joined_rooms", token=AS, as_bot=True)["joined_
         break
 assert space, "guild space not found"
 space_alias = f"#cosmos:{DOMAIN}"
-try:
-    call(f"/_matrix/client/v3/directory/room/{q(space_alias)}", "PUT",
-         {"room_id": space}, token=AS, as_bot=True)
+try:  # as the admin: the bridge may only create aliases in its own namespace
+    call(f"/_matrix/client/v3/directory/room/{q(space_alias)}", "PUT", {"room_id": space})
 except urllib.error.HTTPError as e:
     if e.code != 409:  # alias already exists
         raise
