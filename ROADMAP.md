@@ -242,9 +242,10 @@ _Last updated: 2026-10-06_
   directly, so no invite event appears (only invite-only staff rooms, or
   rooms Draupnir locked, still get one); and the onboarding daemon greets
   each new member of the space ("👋 Welcome X (from matrix.org) to
-  Cosmos!", no ping) in the room of Discord's system channel, else
-  #welcome. The greeting is posted by the bridge bot, which the bridge
-  never relays, so Discord's own join message is not doubled. The first
+  Cosmos!", no ping) in #welcome (fallback: the room of Discord's system
+  channel, which is #off-topic). The greeting is posted by the bridge
+  bot, which the bridge never relays, so Discord's own join message is not
+  doubled. The first
   run records existing members without greeting them
 
 ## ⏭️ Next (in order)

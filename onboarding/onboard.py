@@ -341,20 +341,20 @@ def sync_access(access):
 
 
 def find_welcome():
-    """(guild space, welcome room): the bridged room of the channel Discord
-    posts its join messages in (the guild's system channel), else the one
-    named #welcome. None when either is missing."""
+    """(guild space, welcome room): the bridged room named #welcome, else
+    the one of Discord's system channel (where Discord posts its join
+    messages; #off-topic on Cosmos). None when either is missing."""
     system = discord(f"/guilds/{GUILD}").get("system_channel_id")
     space = by_cid = by_name = None
     for room, state in bot_rooms():
         create_type, name, cid = portal_info(state)
         if create_type == "m.space" and cid == GUILD:
             space = room
-        elif cid and cid == system:
-            by_cid = room
         elif name == "#welcome":
             by_name = room
-    welcome = by_cid or by_name
+        elif cid and cid == system:
+            by_cid = room
+    welcome = by_name or by_cid
     return (space, welcome) if space and welcome else None
 
 
