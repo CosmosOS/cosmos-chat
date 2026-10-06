@@ -245,8 +245,7 @@ _Last updated: 2026-10-06_
   Cosmos!", no ping) in #welcome (fallback: the room of Discord's system
   channel, which is #off-topic). The greeting is posted by the bridge
   bot, which the bridge never relays, so Discord's own join message is not
-  doubled. The first
-  run records existing members without greeting them
+  doubled. The first run records existing members without greeting them
 
 ## ⏭️ Next (in order)
 
