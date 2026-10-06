@@ -1,0 +1,18 @@
+# Draupnir moderation bot (see draupnir/README.md). Only the settings that
+# differ from Draupnir's defaults; the access token is read from
+# secrets/draupnir-access-token (--access-token-path in compose.yml).
+homeserverUrl: "http://synapse:8008"
+rawHomeserverUrl: "http://synapse:8008"
+dataPath: "/data/storage"
+
+# Everyone in this room can command Draupnir: invite trusted moderators only.
+# Created by scripts/setup-draupnir.sh (unencrypted: Draupnir runs without
+# E2EE support).
+managementRoom: "#moderation:gocosmos.org"
+
+# Invites are only accepted from management room members
+autojoinOnlyIfManager: true
+
+# Every room Draupnir is in is protected. The onboarding daemon joins it to
+# each room before that room opens to other servers (sync_access).
+protectAllJoinedRooms: true

@@ -72,6 +72,14 @@ PURGE_DELAY = 7 * 86400
 MATRIX_MAX_UPLOAD = 20 * 1024 * 1024  # synapse max_upload_size
 DISCORD_MAX_UPLOAD = 10 * 1024 * 1024  # webhook attachment limit without boosts
 BOT_MXID = f"@discordbot:{DOMAIN}"
+
+
+def bridge_user(mxid):
+    """The bridge bot or one of its Discord ghosts, never relayed back (a
+    remote @discord_x:other.server is a real user)."""
+    return mxid == BOT_MXID or (mxid.startswith("@discord_") and mxid.endswith(":" + DOMAIN))
+
+
 DISCORD_EPOCH = 1420070400000
 MESSAGE_TYPES = {0, 19, 20, 23}  # default, reply, slash command, context menu
 
@@ -882,7 +890,7 @@ def execute(fid, tid=None, method="POST", message_id=None, payload=None, file=No
 def relay_event(tid, post, ev):
     """A Matrix message, edit or redaction in a post room, to Discord."""
     sender = ev["sender"]
-    if sender == BOT_MXID or sender.startswith("@discord_") or ev["event_id"] in S["e2d"]:
+    if bridge_user(sender) or ev["event_id"] in S["e2d"]:
         return
     fid = post["forum"]
     if ev["type"] == "m.room.redaction":
@@ -1052,7 +1060,10 @@ def create_post(fid, ev):
     post["opening"] = opening
     S["e2d"][opening] = msg["id"]
     link_post(fid, post)
-    admin_join(post["room"], [sender])
+    if sender.endswith(":" + DOMAIN):
+        admin_join(post["room"], [sender])
+    else:  # the admin API only joins local accounts
+        matrix(f"/_matrix/client/v3/rooms/{q(post['room'])}/invite", "POST", {"user_id": sender})
     redact(index, ev["event_id"], "Posted: see its card below")
     for old in S["pending"].pop(sender, []):
         try:
@@ -1066,7 +1077,7 @@ def create_post(fid, ev):
 
 def handle_index_event(fid, ev):
     sender = ev["sender"]
-    if sender == BOT_MXID or sender.startswith("@discord") or ev["type"] != "m.room.message":
+    if bridge_user(sender) or ev["type"] != "m.room.message":
         return
     content = ev.get("content") or {}
     rel = content.get("m.relates_to") or {}
@@ -1110,7 +1121,7 @@ def matrix_sync(timeout_ms):
                         relay_event(*posts[room], ev)
                 except Exception as e:
                     log("ERROR handling", ev.get("event_id"), repr(e))
-                    if room in posts and ev["type"] == "m.room.message" and not ev["sender"].startswith("@discord"):
+                    if room in posts and ev["type"] == "m.room.message" and not bridge_user(ev["sender"]):
                         send(room, {"msgtype": "m.notice",
                                     "body": "⚠️ This message could not be delivered to Discord."},
                              BOT_MXID, relates={"m.in_reply_to": {"event_id": ev["event_id"]}})

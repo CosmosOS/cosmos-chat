@@ -13,6 +13,7 @@ volumes:
   bridge-data:
   onboarding-data:
   forum-data:
+  draupnir-data:
 
 x-hardening: &hardening
   restart: unless-stopped
@@ -136,6 +137,8 @@ services:
       BRIDGE_AS_TOKEN: ${BRIDGE_AS_TOKEN:-}
       GUILD_ID: ${GUILD_ID:-}
       ONBOARD_WATCH: ${ONBOARD_WATCH:-}
+      # set once Draupnir runs: opens the public rooms to other servers
+      DRAUPNIR_MXID: ${DRAUPNIR_MXID:-}
     volumes:
       - ./onboarding:/app:ro
       - onboarding-data:/state
@@ -194,6 +197,28 @@ services:
     depends_on:
       - synapse
       - bridge
+
+  draupnir:
+    <<: *hardening
+    # Moderation bot for the rooms open to other servers (draupnir/README.md).
+    # Only started with COMPOSE_PROFILES including "moderation", once
+    # scripts/setup-draupnir.sh has created its account and token file.
+    profiles: [moderation]
+    image: gnuxie/draupnir:v3.1.0@sha256:eb61e8376116393fb1d04e284b22faad5fb0bfb11991ad71b8b60a96b1b1df7e
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
+    command: ["bot", "--draupnir-config", "/config/production.yaml",
+              "--access-token-path", "/run/secrets/draupnir-access-token"]
+    volumes:
+      - ./draupnir:/config:ro
+      - ./secrets/draupnir-access-token:/run/secrets/draupnir-access-token:ro
+      - draupnir-data:/data
+    networks: [frontend]
+    mem_limit: 512m
+    pids_limit: 128
+    depends_on:
+      - synapse
 
   bridge:
     <<: *hardening

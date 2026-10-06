@@ -29,6 +29,7 @@ OWASP Docker Top 10.
 | Onboarding | `python:3.13-slim` | Discord reaction → auto-created Matrix account (`onboarding/onboard.py`) |
 | Join page | `python:3.13-slim` | Public signup at `/join` behind a self-hosted ALTCHA captcha (`join/join.py`) |
 | Forum mirror | `python:3.13-slim` | Discord forum channels as an index room of post cards plus one room per post, replies and `!post` both ways (`forum/forum.py`) |
+| Draupnir | `gnuxie/draupnir` | Moderation bot for the rooms open to other servers: raid lockdown, shared ban list, bans across every room (`draupnir/README.md`) |
 
 Security highlights: images pinned by sha256 digest, `cap_drop: ALL`,
 `no-new-privileges`, read-only root filesystems, memory/pid limits, an
@@ -94,6 +95,18 @@ the `#/register` route land on `/join`, and Google's recaptcha hosts are
 stripped from the CSP, so the ALTCHA page is the only captcha that can ever
 run in a visitor's browser.
 
+## Accounts from other servers
+
+No new account is needed for people already on Matrix (matrix.org,
+mozilla.org, ...): from their own client they join the space
+**`#cosmos:gocosmos.org`** (https://matrix.to/#/#cosmos:gocosmos.org), then
+any public channel from it. The space is public; the rooms of the channels
+@everyone can see on Discord are joinable by its members, staff channels stay
+invite-only. The onboarding daemon keeps this in line with Discord every 10
+minutes, and only opens a room once Draupnir moderates it
+(`draupnir/README.md`). chat.gocosmos.org itself only signs in gocosmos.org
+accounts.
+
 ## Repo layout
 
 ```
@@ -106,7 +119,9 @@ bridge/                   # mautrix-discord setup guide (configs generated, giti
 onboarding/onboard.py     # Discord reaction -> Matrix account daemon
 join/                     # public signup page (ALTCHA captcha + vendored widget)
 forum/forum.py            # Discord forum -> Matrix index room + one room per post
+draupnir/                 # moderation bot config + setup guide
 wellknown/                # files served at gocosmos.org/.well-known/matrix/
 scripts/gen-secrets.sh    # creates .env + homeserver.yaml with random secrets
+scripts/setup-draupnir.sh # one-time Draupnir account, management room, space address
 docs/secure-chat-zone.md  # architecture & threat-model documentation
 ```

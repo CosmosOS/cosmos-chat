@@ -13,7 +13,13 @@ A first DM is sent before anything is created: members whose DMs are closed
 get their reaction removed instead of an account they cannot log into, and
 can react again once DMs are open. Processed user IDs are persisted in
 /state/processed.json so reactions are only handled once; failures are
-retried after a back-off. Pure stdlib, no dependencies.
+retried after a back-off.
+
+Once DRAUPNIR_MXID is set it also opens the community to Matrix accounts
+from other servers, every 10 minutes (sync_access): the guild space is
+public, the rooms @everyone can see on Discord are joinable by its members,
+staff rooms stay invite-only, and Draupnir moderates every open room.
+Pure stdlib, no dependencies.
 """
 import json
 import os
@@ -37,6 +43,11 @@ STATE = "/state/processed.json"
 UA = "CosmosOnboarding (https://gocosmos.org, 1.0)"
 POLL_SECONDS = 30
 RETRY_SECONDS = 600
+# The moderation bot (draupnir/README.md). Rooms are only opened to other
+# servers once it is set.
+DRAUPNIR = os.environ.get("DRAUPNIR_MXID", "")
+ACCESS_STATE = "/state/access.json"
+ACCESS_SECONDS = 600
 
 
 def log(*args):
@@ -78,19 +89,19 @@ def matrix(path, method="GET", body=None, token=None, as_user=None):
                 {"Authorization": "Bearer " + (token or ADMIN_TOKEN)})
 
 
-def load_state():
+def load_state(path=STATE):
     try:
-        with open(STATE) as f:
+        with open(path) as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 
-def save_state(state):
-    tmp = STATE + ".tmp"
+def save_state(state, path=STATE):
+    tmp = path + ".tmp"
     with open(tmp, "w") as f:
         json.dump(state, f, indent=1)
-    os.replace(tmp, STATE)
+    os.replace(tmp, path)
 
 
 class DMClosed(Exception):
@@ -144,37 +155,142 @@ def visible_channel_ids(member=None):
     return visible
 
 
+def bot_rooms():
+    """(room id, current state events) for every room the bridge bot is in."""
+    for room in matrix("/_matrix/client/v3/joined_rooms", token=AS_TOKEN,
+                       as_user=BOT_MXID)["joined_rooms"]:
+        try:
+            yield room, matrix(f"/_matrix/client/v3/rooms/{quote(room, safe='')}/state",
+                               token=AS_TOKEN, as_user=BOT_MXID)
+        except urllib.error.HTTPError:
+            continue
+
+
+def portal_info(state):
+    """(create type, name, Discord channel id) of a room. The channel id is
+    None for rooms without bridge info state (the bridge's personal spaces,
+    forum post rooms)."""
+    create_type = name = cid = None
+    for ev in state:
+        if ev["type"] == "m.room.create":
+            create_type = ev["content"].get("type")
+        elif ev["type"] == "m.room.name":
+            name = ev["content"].get("name", "")
+        elif ev["type"] in ("m.bridge", "uk.half-shot.bridge") and cid is None:
+            cid = ev["content"].get("channel", {}).get("id")
+    return create_type, name or "", cid
+
+
+def state_content(state, etype, key=""):
+    for ev in state:
+        if ev["type"] == etype and ev["state_key"] == key:
+            return ev["content"]
+    return {}
+
+
 def bridged_rooms(visible):
     """Bridged rooms (channel portals + guild/category spaces) the target
     user may see per Discord permissions. visible is the permitted Discord
     channel id set, or None for see-everything. Rooms without bridge info
     state (the bridge's personal spaces) are never included."""
     rooms = []
-    for room in matrix("/_matrix/client/v3/joined_rooms", token=AS_TOKEN,
-                       as_user=BOT_MXID)["joined_rooms"]:
-        rq = quote(room, safe="")
-        try:
-            state = matrix(f"/_matrix/client/v3/rooms/{rq}/state",
-                           token=AS_TOKEN, as_user=BOT_MXID)
-        except urllib.error.HTTPError:
-            continue
-        create_type = name = cid = None
-        for ev in state:
-            if ev["type"] == "m.room.create":
-                create_type = ev["content"].get("type")
-            elif ev["type"] == "m.room.name":
-                name = ev["content"].get("name", "")
-            elif ev["type"] in ("m.bridge", "uk.half-shot.bridge") and cid is None:
-                cid = ev["content"].get("channel", {}).get("id")
+    for room, state in bot_rooms():
+        create_type, name, cid = portal_info(state)
         if cid is None:
             continue
         if create_type == "m.space":
             if cid == GUILD or visible is None or cid in visible:
                 rooms.append((room, "space"))
-        elif (name or "").startswith("#"):
+        elif name.startswith("#"):
             if visible is None or cid in visible:
                 rooms.append((room, name))
     return rooms
+
+
+def ensure_moderator(room, state, session):
+    """Draupnir joined to the room as room admin (bans, redactions, join
+    rules, server ACLs). Its access token is minted through the admin API
+    once per sync (cached in session) instead of being stored here."""
+    rq = quote(room, safe="")
+    pl = state_content(state, "m.room.power_levels")
+    if pl.get("users", {}).get(DRAUPNIR, 0) < 100:
+        pl = {**pl, "users": {**pl.get("users", {}), DRAUPNIR: 100}}
+        matrix(f"/_matrix/client/v3/rooms/{rq}/state/m.room.power_levels", "PUT", pl,
+               token=AS_TOKEN, as_user=BOT_MXID)
+    if state_content(state, "m.room.member", DRAUPNIR).get("membership") == "join":
+        return
+    if "token" not in session:
+        session["token"] = matrix(
+            f"/_synapse/admin/v1/users/{quote(DRAUPNIR, safe='')}/login", "POST",
+            {"valid_until_ms": int(time.time() * 1000) + 3600_000})["access_token"]
+    try:
+        matrix(f"/_matrix/client/v3/rooms/{rq}/invite", "POST",
+               {"user_id": DRAUPNIR}, token=AS_TOKEN, as_user=BOT_MXID)
+    except urllib.error.HTTPError as e:
+        if e.code != 403:  # already invited
+            raise
+    matrix(f"/_matrix/client/v3/rooms/{rq}/join", "POST", {}, token=session["token"])
+    log("Draupnir joined", state_content(state, "m.room.name").get("name", room))
+
+
+def sync_access(access):
+    """Who can join each bridged room, in line with Discord: the guild space
+    is public, so Matrix accounts from any server can join it; the rooms of
+    the channels and categories @everyone can see are joinable by its
+    members; every other room stays invite-only. Draupnir joins a room as
+    its admin before the room opens. access maps room id -> the join rule
+    this sync last set: a room it opened that is invite-only now was locked
+    by Draupnir (raid protection) or a moderator and stays locked, while a
+    room no longer public on Discord is always closed."""
+    visible = visible_channel_ids()  # @everyone
+    if visible is None:  # @everyone is administrator: never open staff rooms
+        log("@everyone sees every channel, not opening any room")
+        return
+    rooms = [(room, state, *portal_info(state)) for room, state in bot_rooms()]
+    space = next((r[0] for r in rooms if r[2] == "m.space" and r[4] == GUILD), None)
+    if space is None:
+        return
+    restricted = {"join_rule": "restricted",
+                  "allow": [{"type": "m.room_membership", "room_id": space}]}
+    session = {}
+    try:
+        # the guild space last: every room is moderated before outsiders can enter
+        for room, state, create_type, name, cid in sorted(rooms, key=lambda r: r[0] == space):
+            label = name or ("guild space" if room == space else room)
+            rules = state_content(state, "m.room.join_rules")
+            current = rules.get("join_rule", "invite")
+            try:
+                if room == space:
+                    target = {"join_rule": "public"}
+                elif cid and (create_type == "m.space" or name.startswith("#")):
+                    target = restricted if cid in visible else {"join_rule": "invite"}
+                else:
+                    # forum post rooms keep their own (restricted) rules
+                    if current in ("public", "restricted"):
+                        ensure_moderator(room, state, session)
+                    continue
+                path = f"/_matrix/client/v3/rooms/{quote(room, safe='')}/state/m.room.join_rules"
+                if target["join_rule"] == "invite":
+                    if current != "invite":
+                        matrix(path, "PUT", target, token=AS_TOKEN, as_user=BOT_MXID)
+                        log("closed", label)
+                    access[room] = "invite"
+                    continue
+                if access.get(room, "invite") != "invite" and current == "invite":
+                    continue  # locked by Draupnir or a moderator
+                ensure_moderator(room, state, session)
+                if {k: rules.get(k) for k in target} != target:
+                    matrix(path, "PUT", target, token=AS_TOKEN, as_user=BOT_MXID)
+                    log("opened", label)
+                access[room] = target["join_rule"]
+            except Exception as e:  # one broken room must not stall the others
+                log("ERROR syncing access of", label, repr(e))
+    finally:
+        if "token" in session:
+            try:
+                matrix("/_matrix/client/v3/logout", "POST", {}, token=session["token"])
+            except Exception:
+                pass
 
 
 def process(user, state):
@@ -299,10 +415,20 @@ def main():
             time.sleep(3600)
 
     state = load_state()
+    access = load_state(ACCESS_STATE)
     log(f"onboarding daemon up; watching {len(WATCH)} message(s), "
-        f"{len(state)} user(s) already processed")
+        f"{len(state)} user(s) already processed; room access sync "
+        + (f"on, moderated by {DRAUPNIR}" if DRAUPNIR else "off (DRAUPNIR_MXID unset)"))
     retry_at = {}  # Discord user id -> earliest next attempt after a failure
+    next_access = 0
     while True:
+        if DRAUPNIR and time.time() >= next_access:
+            next_access = time.time() + ACCESS_SECONDS
+            try:
+                sync_access(access)
+            except Exception as e:
+                log("ERROR syncing room access", repr(e))
+            save_state(access, ACCESS_STATE)
         for watch in WATCH:
             channel_id, message_id = watch.split(":", 1)
             try:
