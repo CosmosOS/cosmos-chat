@@ -22,9 +22,20 @@ chat.gocosmos.org {
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+	# No other site may frame Element. Element itself frames its sandboxed
+	# /usercontent/ page to save downloaded files: DENY there makes every
+	# file download silently do nothing
+	@usercontent path /usercontent/*
+	header @usercontent {
+		X-Frame-Options SAMEORIGIN
+		Content-Security-Policy "frame-ancestors 'self'"
+	}
+	@notUsercontent not path /usercontent/*
+	header @notUsercontent {
 		X-Frame-Options DENY
 		Content-Security-Policy "frame-ancestors 'none'"
-		Referrer-Policy strict-origin-when-cross-origin
 	}
 
 	# Serve the Cosmos icon instead of Element's branding; matching every
