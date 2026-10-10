@@ -66,9 +66,10 @@ services:
       - "127.0.0.1:8080:80"
     volumes:
       - ./element/config.json:/app/config.json:ro
-      # runtime plugins listed in config.json "modules" (directory mount:
-      # git deploys replace files by inode)
-      - ./element/modules:/app/modules:ro
+      # runtime plugins listed in config.json "modules": the image's nginx
+      # serves /modules/ from /modules (directory mount: git deploys replace
+      # files by inode)
+      - ./element/modules:/modules:ro
       - { type: tmpfs, target: /tmp, tmpfs: { mode: 0o1777 } }
       - { type: tmpfs, target: /var/cache/nginx, tmpfs: { mode: 0o1777 } }
       - { type: tmpfs, target: /var/run, tmpfs: { mode: 0o1777 } }
