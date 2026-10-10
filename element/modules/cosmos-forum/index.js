@@ -12,8 +12,10 @@
  *    its timeline, under Element's own room header and next to the room
  *    list: every post of the Discord forum, active or archived, with search,
  *    tag filters, sorting and a New post form
- *  - a post opens as a normal room; posts that have no room yet are brought
- *    over from Discord on the spot by the forum mirror
+ *  - a post opens as a normal room, in the space you are in: it is joined
+ *    on open and left when you move on unless you wrote or reacted there
+ *    (see enterPost); posts that have no room yet are brought over from
+ *    Discord on the spot by the forum mirror
  *  - post rooms get a "back to the forum" button in their header, forum
  *    rooms a Chat view / Forum view toggle
  *
@@ -49,6 +51,7 @@ const store = {
     loaded: false,
     classic: null,      // index room the user chose to see as a chat room
     views: new Map(),   // forum id -> {query, tags, sort, shown, scroll}, kept across visits
+    joinedToRead: new Set(),   // posts joined on open, see enterPost()
     token: null,        // {value, expires}
     listeners: new Set(),
 };
@@ -165,9 +168,92 @@ function loadPosts(fid, force = false) {
 
 // --- navigation ---------------------------------------------------------------
 
+/**
+ * Open a room without leaving the current space. Element moves you to a
+ * space that holds the room you open, and a room just created and not
+ * synced yet is in none of yours. A context switch, which is how Element
+ * itself opens a space's last room, keeps the space; the module API's
+ * openRoom has no such option, hence Element's dispatcher, with openRoom as
+ * the fallback.
+ */
 function showRoom(roomId) {
     const server = roomId.includes(":") ? roomId.slice(roomId.indexOf(":") + 1) : null;
+    const dispatcher = window.mxDispatcher;
+    if (dispatcher && typeof dispatcher.dispatch === "function") {
+        dispatcher.dispatch({
+            action: "view_room",
+            room_id: roomId,
+            via_servers: server ? [server] : undefined,
+            context_switch: true,
+            metricsTrigger: undefined,
+        });
+        return;
+    }
     store.api.navigation.openRoom(roomId, server ? { viaServers: [server] } : {});
+}
+
+/**
+ * Resolves once this client has synced its own join to roomId (or after
+ * timeoutMs). Element re-picks the space when the room you are viewing gets
+ * joined, and a post just created is not in your space's list yet: opening
+ * it only after the join keeps you where you are.
+ */
+function waitForJoin(roomId, timeoutMs = 10000) {
+    return new Promise((resolve) => {
+        const deadline = Date.now() + timeoutMs;
+        const tick = () => {
+            const cli = client();
+            const room = cli && cli.getRoom(roomId);
+            if ((room && room.getMyMembership() === "join") || Date.now() > deadline) return resolve();
+            setTimeout(tick, 250);
+        };
+        tick();
+    });
+}
+
+/**
+ * Open a post. Element keeps you in a space only for rooms you have joined:
+ * a post you merely preview belongs to none of your spaces (Element ignores
+ * a room's own m.space.parent unless you may manage that space), so the
+ * next room list update sends you to Home. Posts are therefore joined on
+ * open, which also lets you reply at once, and left again when you move on
+ * without having written or reacted there (see leaveIfOnlyRead), so reading
+ * a post does not follow it, like on Discord.
+ */
+async function enterPost(roomId) {
+    const cli = client();
+    const room = cli && cli.getRoom(roomId);
+    if (cli && (!room || room.getMyMembership() !== "join")) {
+        try {
+            const server = roomId.includes(":") ? roomId.slice(roomId.indexOf(":") + 1) : null;
+            await cli.joinRoom(roomId, server ? { viaServers: [server] } : {});
+            store.joinedToRead.add(roomId);
+            await waitForJoin(roomId);
+        } catch (e) {
+            // not allowed to join (not in the CosmosOS space): preview it instead
+            console.warn("cosmos-forum: could not join " + roomId + ", previewing it", e);
+        }
+    }
+    showRoom(roomId);
+}
+
+/** A post joined only to read it, left once the user is elsewhere. */
+function leaveIfOnlyRead(roomId) {
+    store.joinedToRead.delete(roomId);
+    const cli = client();
+    const room = cli && cli.getRoom(roomId);
+    if (!room || room.getMyMembership() !== "join") return;
+    const me = cli.getUserId();
+    const wrote = room.getLiveTimeline().getEvents().some((ev) => ev.getSender() === me && !ev.isState());
+    if (!wrote) cli.leave(roomId).catch((e) => console.warn("cosmos-forum: could not leave " + roomId, e));
+}
+
+function onRoomChange() {
+    const match = /^#\/room\/([^/?]+)/.exec(location.hash);
+    const current = match ? decodeURIComponent(match[1]) : null;
+    for (const roomId of [...store.joinedToRead]) {
+        if (roomId !== current) leaveIfOnlyRead(roomId);
+    }
 }
 
 function showForum(forum) {
@@ -362,13 +448,14 @@ function Forum({ forum }) {
 
     const open = async (post) => {
         setFailed((f) => ({ ...f, [post.id]: null }));
-        if (post.room) return showRoom(post.room);
         setOpening(post.id);
         try {
-            const { room } = await call("/open", { post: post.id });
-            post.room = room;
-            store.rooms[room] = { forum: forum.id, post: post.id };
-            if (alive.current) showRoom(room);
+            if (!post.room) {
+                const { room } = await call("/open", { post: post.id });
+                post.room = room;
+                store.rooms[room] = { forum: forum.id, post: post.id };
+            }
+            if (alive.current) await enterPost(post.room);
         } catch (e) {
             if (alive.current) setFailed((f) => ({ ...f, [post.id]: e.message }));
         } finally {
@@ -445,7 +532,7 @@ function PostCard({ post, tagById, busy, error, disabled, onOpen }) {
         h("div", { className: "cf_card_meta" },
             h("span", null, "💬 " + post.count),
             h("span", null, ago(post.activity)),
-            busy && h("span", { className: "cf_note" }, "Bringing this post over from Discord…")),
+            busy && h("span", { className: "cf_note" }, post.room ? "Opening…" : "Bringing this post over from Discord…")),
         error && h("div", { className: "cf_error" }, error));
 }
 
@@ -467,6 +554,7 @@ function NewPost({ forum, onCancel, onDone }) {
         setError(null);
         try {
             const { room } = await call("/new", { forum: forum.id, title, body, tags });
+            await waitForJoin(room);
             onDone(room);
         } catch (err) {
             setError(err.message);
@@ -639,6 +727,7 @@ export default class CosmosForumModule {
             attempt("forum view", () => {
                 store.listeners.add(queueSync);
                 window.addEventListener("hashchange", queueSync);
+                window.addEventListener("hashchange", () => attempt("leave read posts", onRoomChange));
                 new MutationObserver(queueSync).observe(this.api.rootNode || document.body,
                     { childList: true, subtree: true });
             });

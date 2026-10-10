@@ -294,6 +294,24 @@ _Last updated: 2026-10-06_
   After the fix, production was checked in Chromium: Element starts, the
   plugin loads, and the API answers with real OpenID tokens
 
+- [x] **Forum posts open in the current space; join/leave lines really
+  hidden** (2026-10-10): opening a post from the forum view dropped you in
+  Home. Element keeps you in a space only for rooms you joined: it ignores
+  a room's own `m.space.parent` unless you may manage that space, so a
+  previewed post is in none of your spaces, and Element re-checks on every
+  room list change. Opening a post now joins it (you can reply at once, no
+  Join step) and moving on leaves it again unless you wrote or reacted
+  there, so reading does not follow a post, like on Discord; navigation
+  uses Element's own context switch, and New post waits for its join to
+  sync. While checking that readers' joins stay invisible, it turned out
+  the "hide join/leave, avatar and name changes" default from the arrivals
+  entry above never worked: Element reads these three settings under
+  their legacy names (`hideJoinLeaves`, `hideAvatarChanges`,
+  `hideDisplaynameChanges`), so `showJoinLeaves: false` was ignored.
+  `element/config.json` now uses the legacy names. The e2e test (now with
+  a CosmosOS-like space, 56 checks, passed on two consecutive runs) covers
+  both, plus a control proving the old navigation still lands in Home
+
 ## ⏭️ Next (in order)
 
 - [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org

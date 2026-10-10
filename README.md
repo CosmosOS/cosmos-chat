@@ -110,7 +110,10 @@ accounts.
 Arrivals show in one place, like on Discord: the onboarding daemon greets
 every new member of the space in #welcome, and chat.gocosmos.org hides
 join/leave, avatar and name changes by default (`setting_defaults` in
-`element/config.json`, each member can turn them back on). New accounts
+`element/config.json`, each member can turn them back on; Element reads
+these three under their legacy names `hideJoinLeaves`, `hideAvatarChanges`
+and `hideDisplaynameChanges`, a `showJoinLeaves: false` is silently
+ignored). New accounts
 join the open channels directly, so no invite shows up in them. They also
 get Element's "People" section turned off on every CosmosOS space, so DMs
 stay in Home instead of following them into each category (a per-account,
@@ -131,10 +134,15 @@ list:
 - every post of the Discord forum, active or archived (1,585 at launch),
   with search, tag filters, sorting by activity, age or replies, and a New
   post form that creates the post on Discord under the member's name
-- a post opens as a normal room with a "← #forum" button back; a post that
-  has no room yet (anything quiet for more than 60 days) is brought over on
-  the spot with its opening message and last 100 replies, so old posts
-  only become rooms when someone reads them
+- a post opens as a normal room with a "← #forum" button back, without
+  leaving the space you are in. Element only keeps you in a space for rooms
+  you joined (it ignores a room's own parent space unless you may manage
+  that space), so opening a post joins it, and moving on leaves it again
+  unless you wrote or reacted there: reading does not follow a post, like
+  on Discord, and you can reply at once
+- a post that has no room yet (anything quiet for more than 60 days) is
+  brought over on the spot with its opening message and last 100 replies,
+  so old posts only become rooms when someone reads them
 - a Chat view / Forum view toggle in the forum room's header shows the
   plain timeline of cards, which is also what other Matrix apps see (they
   keep `!post`)

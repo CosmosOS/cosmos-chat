@@ -15,8 +15,8 @@
   "show_labs_settings": false,
   "mobile_guide_toast": false,
   "setting_defaults": {
-    "showJoinLeaves": false,
-    "showAvatarChanges": false,
-    "showDisplaynameChanges": false
+    "hideJoinLeaves": true,
+    "hideAvatarChanges": true,
+    "hideDisplaynameChanges": true
   }
 }
