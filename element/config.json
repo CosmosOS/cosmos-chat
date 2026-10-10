@@ -14,6 +14,7 @@
   "disable_custom_urls": true,
   "show_labs_settings": false,
   "mobile_guide_toast": false,
+  "modules": ["/modules/cosmos-forum.js"],
   "setting_defaults": {
     "showJoinLeaves": false,
     "showAvatarChanges": false,

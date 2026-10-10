@@ -76,6 +76,14 @@ chat.gocosmos.org {
 	handle /join* {
 		reverse_proxy join:8080
 	}
+	# Forum view API of the forum mirror (forum/forum.py), used by Element's
+	# cosmos-forum plugin; every call carries a Matrix OpenID token
+	handle /forum-api/* {
+		reverse_proxy forum:8090
+	}
+	# Element plugins (element/modules): revalidate, so a deploy reaches
+	# everyone at their next page load
+	header /modules/* Cache-Control no-cache
 	# Element hard-redirects mobile browsers to its "install Element X" guide
 	# and ignores mobile_guide_toast (element-web#21616). Serve our own page
 	# instead: app recommendations (Element X, FluffyChat) plus a continue-

@@ -28,7 +28,7 @@ OWASP Docker Top 10.
 | mautrix-discord | `dock.mau.dev/mautrix/discord` | Discord ↔ Matrix bridge (relay mode via webhooks) |
 | Onboarding | `python:3.13-slim` | Discord reaction → auto-created Matrix account (`onboarding/onboard.py`) |
 | Join page | `python:3.13-slim` | Public signup at `/join` behind a self-hosted ALTCHA captcha (`join/join.py`) |
-| Forum mirror | `python:3.13-slim` | Discord forum channels as an index room of post cards plus one room per post, replies and `!post` both ways (`forum/forum.py`) |
+| Forum mirror | `python:3.13-slim` | Discord forum channels as an index room of post cards plus one room per post, replies and `!post` both ways, plus the API behind Element's forum view (`forum/forum.py`) |
 | Draupnir | `gnuxie/draupnir` | Moderation bot for the rooms open to other servers: raid lockdown, shared ban list, bans across every room (`draupnir/README.md`) |
 
 Security highlights: images pinned by sha256 digest, `cap_drop: ALL`,
@@ -116,6 +116,37 @@ get Element's "People" section turned off on every CosmosOS space, so DMs
 stay in Home instead of following them into each category (a per-account,
 per-space setting the Element config cannot default).
 
+## Forums in Element
+
+Discord's forum channels (#cosmos-projects, #cosmos-help, #other-projects)
+have no Matrix equivalent, and Element has no forum room type. The forum
+mirror (`forum/forum.py`) gives each forum an index room of post cards and
+one room per post, synced both ways with Discord. On chat.gocosmos.org an
+Element plugin (`element/modules/cosmos-forum.js`, loaded through
+`"modules"` in `element/config.json`, no fork) turns the index room into a
+Discord-style forum, under Element's own room header and next to the room
+list:
+
+- every post of the Discord forum, active or archived (1,585 at launch),
+  with search, tag filters, sorting by activity, age or replies, and a New
+  post form that creates the post on Discord under the member's name
+- a post opens as a normal room with a "← #forum" button back; a post that
+  has no room yet (anything quiet for more than 60 days) is brought over on
+  the spot with its opening message and last 100 replies, so old posts
+  only become rooms when someone reads them
+- a Chat view / Forum view toggle in the forum room's header shows the
+  plain timeline of cards, which is also what other Matrix apps see (they
+  keep `!post`)
+
+The plugin gets its data from the mirror's API at
+`chat.gocosmos.org/forum-api/`, authenticated with a Matrix OpenID token
+checked against Synapse (local accounts only). Element waits for its
+plugins before starting, so the plugin never throws out of its setup: if
+the API is down, forum rooms show their timeline of cards; if an Element
+upgrade renames the room view, the same. Its module API version is
+accepted as a range, so an upgrade cannot lock Element out, but check the
+forum view after each Element bump.
+
 ## Repo layout
 
 ```
@@ -123,11 +154,12 @@ compose.yml               # the whole stack (Caddy, Synapse, Postgres, Element, 
 caddy/Caddyfile           # TLS, routing, security headers
 synapse/                  # homeserver.example.yaml (template) + log.config
 element/config.json       # Element web configuration
+element/modules/          # Element plugins: cosmos-forum.js, the Discord-style forum view
 postgres/                 # first-boot init script (bridge DB)
 bridge/                   # mautrix-discord setup guide (configs generated, gitignored)
 onboarding/onboard.py     # Discord reaction -> Matrix account daemon
 join/                     # public signup page (ALTCHA captcha + vendored widget)
-forum/forum.py            # Discord forum -> Matrix index room + one room per post
+forum/forum.py            # Discord forum -> Matrix index room + one room per post, forum view API
 draupnir/                 # moderation bot config + setup guide
 wellknown/                # files served at gocosmos.org/.well-known/matrix/
 scripts/gen-secrets.sh    # creates .env + homeserver.yaml with random secrets

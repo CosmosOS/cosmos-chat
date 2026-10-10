@@ -265,6 +265,27 @@ _Last updated: 2026-10-06_
   now turn it off for each new account. Accounts from other servers keep
   Element's default; anyone can turn it back on in the space's Preferences
 
+- [x] **Discord-style forums in Element** (2026-10-10): #cosmos-general got
+  every kind of conversation, partly because Matrix users had no help
+  forum: only #cosmos-projects was mirrored. Element has no forum room type
+  (a spec idea, matrix-spec#2321; only the Sable client renders one), and
+  the bridge can only reply in Discord threads from relay mode, not start
+  them. So: #cosmos-help and #other-projects are now mirrored too (same
+  index room + one room per post, 60 days imported), and an Element plugin
+  (`element/modules/cosmos-forum.js`, runtime module API, no fork) shows a
+  forum room as a forum, in place of its timeline and next to the room
+  list: all 1,585 Discord posts with search, tag filters, sorting and a
+  New post form. Older posts are brought over (opening message + last 100
+  replies) the first time someone opens one, instead of 1,585 rooms up
+  front. Post rooms get a back button, forum rooms a Chat view toggle. The
+  forum mirror catalogs every post (hourly rescan, opening messages
+  fetched once for excerpts) and serves it at `/forum-api/`, authenticated
+  with Matrix OpenID tokens. Element waits for plugins before starting, so
+  every hook is isolated: the API down or a renamed Element element only
+  brings back the timeline of cards. Tested end to end against Element
+  1.12.25 in Chromium (39 checks) before deploy. The pinned how-to and
+  topic of the index rooms now say "!post Your title" for every forum
+
 ## ⏭️ Next (in order)
 
 - [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org

@@ -66,6 +66,9 @@ services:
       - "127.0.0.1:8080:80"
     volumes:
       - ./element/config.json:/app/config.json:ro
+      # runtime plugins listed in config.json "modules" (directory mount:
+      # git deploys replace files by inode)
+      - ./element/modules:/app/modules:ro
       - { type: tmpfs, target: /tmp, tmpfs: { mode: 0o1777 } }
       - { type: tmpfs, target: /var/cache/nginx, tmpfs: { mode: 0o1777 } }
       - { type: tmpfs, target: /var/run, tmpfs: { mode: 0o1777 } }
@@ -180,8 +183,10 @@ services:
     command: ["python", "-u", "/app/forum.py"]
     environment:
       # mautrix-discord skips forum channels: each is mirrored as an index
-      # room of post cards plus one Matrix room per post (see forum/forum.py)
-      FORUM_CHANNELS: ${FORUM_CHANNELS:-1087332637301014548}
+      # room of post cards plus one Matrix room per post (see forum/forum.py).
+      # #cosmos-projects, #cosmos-help, #other-projects. Its forum view API
+      # (:8090, internal) is served by Caddy at chat.gocosmos.org/forum-api/
+      FORUM_CHANNELS: ${FORUM_CHANNELS:-1087332637301014548,1095021121671274607,1095081803347411075}
       FORUM_BACKFILL_DAYS: ${FORUM_BACKFILL_DAYS:-60}
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
       BRIDGE_AS_TOKEN: ${BRIDGE_AS_TOKEN:-}

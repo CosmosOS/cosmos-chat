@@ -34,6 +34,20 @@ Discord takes its card and room with it (checked when it leaves the active
 list, and hourly for every post; the room is emptied at once and purged a
 week later). State lives in
 /state/forum-index.json. Pure stdlib, no dependencies.
+
+Element's forum view (element/modules/cosmos-forum.js) lists every post of
+a forum, not only the mirrored ones, through a small HTTP API on API_PORT
+(Caddy serves it at chat.gocosmos.org/forum-api/):
+  - GET /forums: the mirrored forums (index room, tags) and the post rooms
+  - GET /posts?forum=<id>: every post, active or archived, from a catalog
+    of the whole forum rescanned hourly (/state/forum-catalog.json); the
+    opening message of each post is fetched once for its excerpt and author
+  - POST /open {post}: the post's room, imported on the spot for a post
+    that has none yet (its opening message plus the last OPEN_RECENT
+    replies), so old posts only become rooms when someone reads them
+  - POST /new {forum, title, body, tags}: same as !post
+Callers prove who they are with a Matrix OpenID token (the widget sign-in
+flow), checked against Synapse; only accounts of this server are served.
 """
 import base64
 import hashlib
@@ -43,11 +57,13 @@ import json
 import os
 import re
 import secrets
+import threading
 import time
 import urllib.error
 import urllib.request
 from datetime import datetime
-from urllib.parse import quote
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, quote, urlparse
 
 SYNAPSE = os.environ.get("SYNAPSE_URL", "http://synapse:8008")
 DOMAIN = os.environ.get("MATRIX_DOMAIN", "gocosmos.org")
@@ -72,6 +88,15 @@ PURGE_DELAY = 7 * 86400
 MATRIX_MAX_UPLOAD = 20 * 1024 * 1024  # synapse max_upload_size
 DISCORD_MAX_UPLOAD = 10 * 1024 * 1024  # webhook attachment limit without boosts
 BOT_MXID = f"@discordbot:{DOMAIN}"
+API_PORT = 8090
+CATALOG = "/state/forum-catalog.json"
+CATALOG_SCAN_SECONDS = 3600  # full rescan of every forum, archived posts included
+OPEN_RECENT = 100            # replies imported when a post is opened from the forum view
+OPEN_LIMIT = 10              # posts one account can bring over per OPEN_WINDOW
+OPEN_WINDOW = 600
+# The main loop, the catalog worker and the API threads share S, CAT and the
+# Discord/Matrix side effects: each holds LOCK while it reads or changes them
+LOCK = threading.RLock()
 
 
 def bridge_user(mxid):
@@ -84,6 +109,9 @@ DISCORD_EPOCH = 1420070400000
 MESSAGE_TYPES = {0, 19, 20, 23}  # default, reply, slash command, context menu
 
 S = {}            # persisted state, see load_state()
+CAT = {}          # every post of the mirrored forums, see load_catalog()
+OPENID = {}       # OpenID token -> (Matrix user, cache expiry)
+OPENED = {}       # Matrix user -> times they brought a post over, see api_open()
 FORUM_INFO = {}   # forum channel id -> Discord channel object (tags, name)
 ROLES = {}        # Discord role id -> name, for <@&id> mentions
 CHANNELS = {}     # Discord channel id -> name, for <#id> mentions
@@ -200,6 +228,26 @@ def save_state():
     with open(tmp, "w") as f:
         json.dump(S, f)
     os.replace(tmp, STATE)
+
+
+def load_catalog():
+    try:
+        with open(CATALOG) as f:
+            cat = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        cat = {}
+    # posts: thread id -> {forum, title, tags, owner, created, activity, count,
+    #                      archived, locked, excerpt, author}; excerpt is None
+    #                      until the opening message has been fetched
+    cat.setdefault("posts", {})
+    return cat
+
+
+def save_catalog():
+    tmp = CATALOG + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(CAT, f)
+    os.replace(tmp, CATALOG)
 
 
 # --- Discord text to Matrix ------------------------------------------------
@@ -675,6 +723,7 @@ def remove_post(fid, tid, post):
             log("could not remove card:", e.code)
     set_state(S["forums"][fid]["parent"], "m.space.child", post["room"], {})
     del S["posts"][tid]
+    CAT["posts"].pop(tid, None)
     CHANNELS.pop(tid, None)
     S["purge"][post["room"]] = time.time() + PURGE_DELAY
     save_state()
@@ -720,6 +769,8 @@ def poll_discord():
     cutoff = time.time() * 1000 - BACKFILL_DAYS * 86400000
     threads = [t for t in discord(f"/guilds/{GUILD}/threads/active")["threads"]
                if t.get("parent_id") in FORUMS]
+    for thread in threads:  # new posts reach the forum view within a poll
+        catalog_thread(thread)
     check_deleted({t["id"] for t in threads})
     for thread in threads:
         fid = thread["parent_id"]
@@ -736,6 +787,112 @@ def poll_discord():
             log("ERROR syncing post", thread.get("name"), repr(e))
 
 
+def archived_threads(fid, since_ms=0):
+    """A forum's archived posts, most recently archived first, stopping at
+    the first page archived before since_ms (those have no newer activity)."""
+    threads, before = [], None
+    while True:
+        page = discord(f"/channels/{fid}/threads/archived/public?limit=100"
+                       + (f"&before={q(before)}" if before else ""))
+        threads += page["threads"]
+        if not page.get("has_more") or not page["threads"]:
+            return threads
+        before = page["threads"][-1]["thread_metadata"]["archive_timestamp"]
+        if iso_ms(before) < since_ms:
+            return threads
+
+
+# --- catalog of every post, for the forum view ------------------------------
+
+def catalog_thread(thread):
+    """Add a post to the catalog, or refresh what Discord's thread object
+    says about it (its opening message is fetched separately)."""
+    tid = thread["id"]
+    meta = thread.get("thread_metadata") or {}
+    entry = CAT["posts"].setdefault(tid, {"excerpt": None, "author": None})
+    entry.update(forum=thread["parent_id"], title=thread["name"],
+                 tags=thread.get("applied_tags", []), owner=thread.get("owner_id"),
+                 created=snowflake_ms(tid),
+                 activity=snowflake_ms(thread.get("last_message_id") or tid),
+                 count=thread.get("message_count", 0),
+                 archived=bool(meta.get("archived")), locked=bool(meta.get("locked")))
+
+
+def scan_catalog():
+    """Rebuild the catalog from every post of every forum, active and
+    archived; posts Discord no longer lists were deleted. The Discord
+    calls run without LOCK, so the bridge keeps going meanwhile."""
+    active = [t for t in discord(f"/guilds/{GUILD}/threads/active")["threads"]
+              if t.get("parent_id") in FORUMS]
+    found = active + [t for fid in FORUMS for t in archived_threads(fid)]
+    with LOCK:
+        seen = set()
+        for thread in found:
+            catalog_thread(thread)
+            seen.add(thread["id"])
+        for tid in [t for t in CAT["posts"] if t not in seen]:
+            del CAT["posts"][tid]
+        save_catalog()
+    log(f"post catalog: {len(seen)} post(s) in {len(FORUMS)} forum(s)")
+
+
+def excerpt(text, limit=280):
+    text = " ".join(text.split())
+    return text[:limit] + "…" if len(text) > limit else text
+
+
+def fetch_openings(batch):
+    """Excerpt and author of up to batch posts whose opening message was
+    never fetched, most recently active first. Returns how many are left."""
+    with LOCK:
+        todo = sorted((t for t, p in CAT["posts"].items() if p.get("excerpt") is None),
+                      key=lambda t: -CAT["posts"][t]["activity"])
+    for tid in todo[:batch]:
+        try:
+            msg = discord(f"/channels/{tid}/messages/{tid}")
+        except urllib.error.HTTPError as e:
+            if e.code >= 500:  # retried on the next round
+                raise
+            msg = None  # the opening message was deleted (404), or unreadable
+        author = None
+        if msg:
+            author = msg["author"].get("global_name") or msg["author"]["username"]
+        else:
+            owner = CAT["posts"].get(tid, {}).get("owner")
+            try:
+                user = discord(f"/users/{owner}") if owner else None
+                author = user and (user.get("global_name") or user["username"])
+            except urllib.error.HTTPError:
+                pass
+        with LOCK:
+            entry = CAT["posts"].get(tid)
+            if entry is not None:
+                entry["excerpt"] = excerpt(message_text(msg)) if msg else ""
+                entry["author"] = author
+    if todo[:batch]:
+        with LOCK:
+            save_catalog()
+    return max(0, len(todo) - batch)
+
+
+def catalog_worker():
+    """Background thread: the hourly rescan, and the opening messages of
+    new posts (a few per second, so the first fill of a big forum takes
+    minutes without starving the mirror of Discord rate limit)."""
+    next_scan = 0
+    while True:
+        left = 0
+        try:
+            if time.time() >= next_scan:
+                next_scan = time.time() + 300  # retry soon if the scan fails
+                scan_catalog()
+                next_scan = time.time() + CATALOG_SCAN_SECONDS
+            left = fetch_openings(20)
+        except Exception as e:
+            log("ERROR updating the post catalog", repr(e))
+        time.sleep(5 if left else 30)
+
+
 def backfill_forum(fid):
     """Import every post with activity since the cutoff, active or
     archived, least recently active first, so the newest cards end up at
@@ -743,16 +900,7 @@ def backfill_forum(fid):
     cutoff = time.time() * 1000 - BACKFILL_DAYS * 86400000
     threads = [t for t in discord(f"/guilds/{GUILD}/threads/active")["threads"]
                if t.get("parent_id") == fid]
-    before = None
-    while True:
-        page = discord(f"/channels/{fid}/threads/archived/public?limit=100"
-                       + (f"&before={q(before)}" if before else ""))
-        threads += page["threads"]
-        if not page.get("has_more") or not page["threads"]:
-            break
-        before = page["threads"][-1]["thread_metadata"]["archive_timestamp"]
-        if iso_ms(before) < cutoff:  # archived before the cutoff: no newer activity
-            break
+    threads += archived_threads(fid, cutoff)
     recent = [t for t in threads if snowflake_ms(t.get("last_message_id") or t["id"]) >= cutoff]
     recent.sort(key=lambda t: snowflake_ms(t.get("last_message_id") or t["id"]))
     log(f"backfilling {len(recent)} post(s) of #{FORUM_INFO[fid]['name']}")
@@ -785,10 +933,15 @@ def proxy_url(mxc):
 
 
 def member_profile(room, user):
+    """Name and proxied avatar of a user in a room, or from their global
+    profile when they are not in it (a forum view user who left the index)."""
     try:
         member = matrix(f"/_matrix/client/v3/rooms/{q(room)}/state/m.room.member/{q(user)}")
     except urllib.error.HTTPError:
-        member = {}
+        try:
+            member = matrix(f"/_matrix/client/v3/profile/{q(user)}")
+        except urllib.error.HTTPError:
+            member = {}
     return member.get("displayname") or user, proxy_url(member.get("avatar_url"))
 
 
@@ -947,41 +1100,64 @@ def relay_event(tid, post, ev):
     save_state()
 
 
-# --- !post in the index room -----------------------------------------------
+# --- new posts: !post in the index room, or the forum view -----------------
 
 POST_COOLDOWN = 600  # seconds between two posts of the same Matrix user
-NOT_A_POST = ("Only new posts go here. To post your project, send: !post Your project name, "
-              "then a description on the next lines and optional #tags (see the pinned message). "
+NOT_A_POST = ("Only new posts go here. To create one, send: !post Your title, then a "
+              "description on the next lines and optional #tags (see the pinned message). "
               "To reply to a post, open its card.")
+HOWTO_VERSION = 2  # bump to rewrite the pinned how-to of existing index rooms
+
+
+class PostError(Exception):
+    """A new post refused before it reached Discord; the message says why."""
+
+
+def postable_tags(fid):
+    """Tags a Matrix user may apply: Discord keeps moderated ones for staff."""
+    return [t for t in FORUM_INFO[fid].get("available_tags", []) if not t.get("moderated")]
 
 
 def instructions(fid):
-    tags = ", ".join("#" + t["name"] for t in FORUM_INFO[fid].get("available_tags", []))
-    body = ("📌 How to post your project from Matrix\n"
-            "Send one message starting with !post:\n\n"
-            "!post Your project name\n"
-            "A short description of your project\n"
-            f"#os #c#\n\n"
-            f"The first line is the title, the next lines the description, and #tags are "
-            f"optional ({tags}). The bot creates the post on Discord under your name, opens a "
-            f"room for it and adds you to it: add screenshots and details there.\n"
+    names = [t["name"] for t in postable_tags(fid)]
+    tags = ", ".join("#" + n for n in names)
+    example = " ".join("#" + n for n in names[:2])
+    optional = f" and #tags are optional ({tags})" if tags else ""
+    body = ("📌 How to create a post from Matrix\n"
+            "On chat.gocosmos.org, use the New post button of the forum view. From any "
+            "other Matrix app, send one message starting with !post:\n\n"
+            "!post Your title\n"
+            "What your post is about\n"
+            + (f"{example}\n" if example else "") + "\n"
+            f"The first line is the title, the next lines the description{optional}. "
+            "The bot creates the post on Discord under your name, opens a room for it and "
+            "adds you to it: add screenshots and details there.\n"
             "Each card below opens a post's room, and replies there are shared with Discord. "
             "Other messages in this room are removed to keep the list clean.")
-    formatted = ("<strong>📌 How to post your project from Matrix</strong><br>"
-                 "Send one message starting with <code>!post</code>:"
-                 "<pre><code>!post Your project name\nA short description of your project\n#os #c#</code></pre>"
-                 f"The first line is the title, the next lines the description, and #tags are "
-                 f"optional ({html.escape(tags)}). The bot creates the post on Discord under your name, "
-                 "opens a room for it and adds you to it: add screenshots and details there.<br>"
+    formatted = ("<strong>📌 How to create a post from Matrix</strong><br>"
+                 "On chat.gocosmos.org, use the <strong>New post</strong> button of the forum "
+                 "view. From any other Matrix app, send one message starting with "
+                 "<code>!post</code>:"
+                 "<pre><code>!post Your title\nWhat your post is about"
+                 + (f"\n{html.escape(example)}" if example else "") + "</code></pre>"
+                 f"The first line is the title, the next lines the description"
+                 f"{html.escape(optional)}. The bot creates the post on Discord under your "
+                 "name, opens a room for it and adds you to it: add screenshots and details "
+                 "there.<br>"
                  "Each card below opens a post's room, and replies there are shared with Discord. "
                  "Other messages in this room are removed to keep the list clean.")
     return {"msgtype": "m.text", "body": body,
             "format": "org.matrix.custom.html", "formatted_body": formatted}
 
 
+def index_topic(fid):
+    return " · ".join(filter(None, [(FORUM_INFO[fid].get("topic") or "").strip(),
+                                    "Each card opens a post's room",
+                                    "New post: !post Your title (see the pinned message)"]))
+
+
 def parse_post(fid, body):
-    """'!post Title\\ndescription\\n#tags' -> (title, description, tag ids,
-    error or None)."""
+    """'!post Title\\ndescription\\n#tags' -> (title, description, tag ids)."""
     lines = body.strip().split("\n")
     title = lines[0][len("!post"):].strip()
     rest = lines[1:]
@@ -998,13 +1174,7 @@ def parse_post(fid, body):
     while rest and (not rest[-1].strip() or all(
             w.startswith("#") and w[1:].lower() in by_name for w in rest[-1].split())):
         rest.pop()  # a trailing line of tags is not part of the description
-    description = "\n".join(rest).strip()
-    if not title:
-        return None, None, None, "Your post needs a title: !post Your project name"
-    if FORUM_INFO[fid].get("flags", 0) & 16 and not tag_ids:  # REQUIRE_TAG
-        names = ", ".join("#" + t["name"] for t in FORUM_INFO[fid].get("available_tags", []))
-        return None, None, None, f"This forum requires at least one tag: {names}"
-    return title[:100], description, tag_ids[:5], None
+    return title, "\n".join(rest).strip(), tag_ids
 
 
 def reject(fid, ev, reason):
@@ -1017,20 +1187,26 @@ def reject(fid, ev, reason):
     save_state()
 
 
-def create_post(fid, ev):
-    """A !post from the index: create the Discord post through the webhook
-    under the sender's Matrix name and avatar, its room and its card."""
-    sender = ev["sender"]
-    index = S["forums"][fid]["index"]
+def new_post(fid, sender, title, description, tag_ids):
+    """Create a Discord post through the webhook under the sender's Matrix
+    name and avatar, then its room (the sender joined) and its card.
+    Raises PostError when the post is refused."""
     wait = S["cooldown"].get(sender, 0) + POST_COOLDOWN - time.time()
     if wait > 0:
-        return reject(fid, ev, f"You can create one post every {POST_COOLDOWN // 60} minutes; "
-                               f"try again in {int(wait // 60) + 1} min.")
-    title, description, tag_ids, error = parse_post(fid, plain_body(ev.get("content") or {}))
-    if error:
-        return reject(fid, ev, error)
+        raise PostError(f"You can create one post every {POST_COOLDOWN // 60} minutes; "
+                        f"try again in {int(wait // 60) + 1} min.")
+    title = " ".join(title.split())[:100]
+    if not title:
+        raise PostError("Your post needs a title: !post Your title")
+    allowed = {t["id"] for t in postable_tags(fid)}
+    tag_ids = [t for t in dict.fromkeys(tag_ids) if t in allowed][:5]
+    if FORUM_INFO[fid].get("flags", 0) & 16 and not tag_ids:  # REQUIRE_TAG
+        names = ", ".join("#" + t["name"] for t in postable_tags(fid))
+        raise PostError(f"This forum requires at least one tag: {names}")
+    description = description.strip()[:2000]
+    index = S["forums"][fid]["index"]
     name, avatar = member_profile(index, sender)
-    payload = {"thread_name": title, "content": (description or title)[:2000],
+    payload = {"thread_name": title, "content": description or title,
                "applied_tags": tag_ids, "username": webhook_name(name),
                "allowed_mentions": {"parse": []}}
     if avatar:
@@ -1039,7 +1215,7 @@ def create_post(fid, ev):
         msg = execute(fid, payload=payload)
     except urllib.error.HTTPError as e:
         log("could not create Discord post:", e.code)
-        return reject(fid, ev, "The post could not be created on Discord, please try again later.")
+        raise PostError("The post could not be created on Discord, please try again later.")
     tid = msg["channel_id"]
     post = {"forum": fid, "origin": "matrix", "name": title, "tags": tag_ids, "author": name,
             "text": description, "avatar": None, "count": 0,
@@ -1064,15 +1240,28 @@ def create_post(fid, ev):
         admin_join(post["room"], [sender])
     else:  # the admin API only joins local accounts
         matrix(f"/_matrix/client/v3/rooms/{q(post['room'])}/invite", "POST", {"user_id": sender})
+    S["cooldown"][sender] = time.time()
+    update_card(fid, tid, post)
+    log("post created from Matrix:", title, "by", sender)
+    return tid, post
+
+
+def create_post(fid, ev):
+    """A !post from the index room."""
+    sender = ev["sender"]
+    index = S["forums"][fid]["index"]
+    title, description, tag_ids = parse_post(fid, plain_body(ev.get("content") or {}))
+    try:
+        new_post(fid, sender, title, description, tag_ids)
+    except PostError as e:
+        return reject(fid, ev, str(e))
     redact(index, ev["event_id"], "Posted: see its card below")
     for old in S["pending"].pop(sender, []):
         try:
             redact(index, old, "Replaced by a successful post")
         except urllib.error.HTTPError:
             pass
-    S["cooldown"][sender] = time.time()
-    update_card(fid, tid, post)
-    log("post created from Matrix:", title, "by", sender)
+    save_state()
 
 
 def handle_index_event(fid, ev):
@@ -1101,13 +1290,20 @@ def sync_filter():
 def matrix_sync(timeout_ms):
     """Long-poll the index and post rooms as the bridge bot: !post in the
     index, replies in post rooms. The first sync only takes a position, so
-    history from before the daemon started is never acted on."""
-    since = S.get("since")
-    path = (f"/_matrix/client/v3/sync?timeout={timeout_ms if since else 0}"
-            f"&filter={q(json.dumps(sync_filter()))}")
+    history from before the daemon started is never acted on. The long poll
+    itself runs without LOCK, so the forum view API answers meanwhile."""
+    with LOCK:
+        since = S.get("since")
+        path = (f"/_matrix/client/v3/sync?timeout={timeout_ms if since else 0}"
+                f"&filter={q(json.dumps(sync_filter()))}")
     if since:
         path += "&since=" + q(since)
     resp = matrix(path)
+    with LOCK:
+        handle_sync(since, resp)
+
+
+def handle_sync(since, resp):
     S["since"] = resp["next_batch"]
     if since:
         indexes = {f["index"]: fid for fid, f in S["forums"].items() if f.get("index")}
@@ -1126,6 +1322,185 @@ def matrix_sync(timeout_ms):
                                     "body": "⚠️ This message could not be delivered to Discord."},
                              BOT_MXID, relates={"m.in_reply_to": {"event_id": ev["event_id"]}})
     save_state()
+
+
+# --- forum view API ----------------------------------------------------------
+
+class ApiError(Exception):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
+def openid_user(token):
+    """The local account behind a Matrix OpenID token (asked to Synapse,
+    then cached for a few minutes), or None."""
+    if not token or len(token) > 512:
+        return None
+    hit = OPENID.get(token)
+    if hit and hit[1] > time.time():
+        return hit[0]
+    try:
+        info = request(f"{SYNAPSE}/_matrix/federation/v1/openid/userinfo?access_token={q(token)}")
+    except urllib.error.HTTPError:
+        return None
+    user = info.get("sub") or ""
+    if not user.endswith(":" + DOMAIN) or bridge_user(user):
+        return None
+    if len(OPENID) > 5000:
+        OPENID.clear()
+    OPENID[token] = (user, time.time() + 300)
+    return user
+
+
+def api_forums():
+    """The mirrored forums, and which forum and post each post room is."""
+    with LOCK:
+        forums = []
+        for fid in FORUMS:
+            info, forum = FORUM_INFO.get(fid, {}), S["forums"].get(fid, {})
+            if not forum.get("index"):
+                continue
+            postable = {t["id"] for t in postable_tags(fid)}
+            forums.append({
+                "id": fid, "name": info.get("name", ""), "topic": (info.get("topic") or "").strip(),
+                "index": forum["index"], "url": f"https://discord.com/channels/{GUILD}/{fid}",
+                "require_tag": bool(info.get("flags", 0) & 16),
+                "tags": [{"id": t["id"], "name": t["name"], "emoji": t.get("emoji_name"),
+                          "postable": t["id"] in postable} for t in info.get("available_tags", [])]})
+        rooms = {p["room"]: {"forum": p["forum"], "post": tid} for tid, p in S["posts"].items()}
+    return {"forums": forums, "rooms": rooms}
+
+
+def api_posts(fid):
+    """Every post of a forum, most recently active first."""
+    with LOCK:
+        if fid not in S["forums"]:
+            raise ApiError(404, "Unknown forum.")
+        posts = {}
+        for tid, entry in CAT["posts"].items():
+            if entry["forum"] == fid:
+                posts[tid] = {"id": tid, "title": entry["title"], "tags": entry["tags"],
+                              "author": entry.get("author") or "", "excerpt": entry.get("excerpt") or "",
+                              "created": entry["created"], "activity": entry["activity"],
+                              "count": entry["count"], "archived": entry["archived"],
+                              "locked": entry["locked"], "room": None}
+        for tid, post in S["posts"].items():
+            if post["forum"] != fid:
+                continue
+            item = posts.setdefault(tid, {  # created from Matrix since the last poll
+                "id": tid, "title": post["name"], "tags": post.get("tags", []), "excerpt": "",
+                "created": snowflake_ms(tid), "activity": post.get("activity", 0),
+                "count": post.get("count", 0), "archived": False, "locked": False})
+            item["room"] = post["room"]
+            item["author"] = item.get("author") or post.get("author") or ""
+            item["excerpt"] = item["excerpt"] or excerpt(post.get("text") or "")
+            item["activity"] = max(item["activity"], post.get("activity", 0))
+    return {"posts": sorted(posts.values(), key=lambda p: -p["activity"])}
+
+
+def api_open(user, tid):
+    """The room of a post, imported now if it has none: the opening message
+    and the last OPEN_RECENT replies (a notice links older ones)."""
+    with LOCK:
+        if tid in S["posts"]:
+            return {"room": S["posts"][tid]["room"]}
+        entry = CAT["posts"].get(tid)
+        if not entry or entry["forum"] not in S["forums"]:
+            raise ApiError(404, "This post no longer exists on Discord.")
+        recent = [t for t in OPENED.get(user, []) if t > time.time() - OPEN_WINDOW]
+        if len(recent) >= OPEN_LIMIT:
+            raise ApiError(429, "You opened many older posts in a row, please try again in a few minutes.")
+        OPENED[user] = recent + [time.time()]
+        try:
+            thread = discord(f"/channels/{tid}")
+            newest = discord(f"/channels/{tid}/messages?limit={OPEN_RECENT}")
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                raise ApiError(404, "This post no longer exists on Discord.")
+            raise
+        cutoff = 0
+        if len(newest) >= OPEN_RECENT:
+            cutoff = snowflake_ms(min(newest, key=lambda m: int(m["id"]))["id"]) - 1
+        import_post(entry["forum"], thread, cutoff)
+        log("post opened from the forum view by", user)
+        return {"room": S["posts"][tid]["room"]}
+
+
+def api_new(user, body):
+    fid = body.get("forum")
+    title, description, tags = body.get("title"), body.get("body", ""), body.get("tags", [])
+    if not (isinstance(fid, str) and isinstance(title, str) and isinstance(description, str)
+            and isinstance(tags, list) and all(isinstance(t, str) for t in tags)):
+        raise ApiError(400, "Invalid post.")
+    with LOCK:
+        if not S["forums"].get(fid, {}).get("index"):
+            raise ApiError(404, "Unknown forum.")
+        try:
+            tid, post = new_post(fid, user, title, description, tags)
+        except PostError as e:
+            raise ApiError(400, str(e))
+        return {"room": post["room"], "post": tid}
+
+
+class ApiHandler(BaseHTTPRequestHandler):
+    server_version = "CosmosForum"
+    sys_version = ""
+
+    def log_message(self, fmt, *args):  # errors are logged by route()
+        pass
+
+    def reply(self, code, data):
+        body = json.dumps(data).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        self.route("GET")
+
+    def do_POST(self):
+        self.route("POST")
+
+    def route(self, method):
+        url = urlparse(self.path)
+        path = url.path.removeprefix("/forum-api")
+        try:
+            auth = self.headers.get("Authorization", "")
+            user = openid_user(auth[7:]) if auth.startswith("Bearer ") else None
+            if not user:
+                raise ApiError(401, "Your session could not be checked, please reload the page.")
+            if method == "GET" and path == "/forums":
+                return self.reply(200, api_forums())
+            if method == "GET" and path == "/posts":
+                return self.reply(200, api_posts(parse_qs(url.query).get("forum", [""])[0]))
+            if method == "POST" and path in ("/open", "/new"):
+                length = int(self.headers.get("Content-Length") or 0)
+                if length > 16384:
+                    raise ApiError(413, "Too long.")
+                body = json.loads(self.rfile.read(length) or b"{}")
+                if not isinstance(body, dict):
+                    raise ApiError(400, "Invalid request.")
+                if path == "/open":
+                    return self.reply(200, api_open(user, str(body.get("post", ""))))
+                return self.reply(200, api_new(user, body))
+            raise ApiError(404, "Not found.")
+        except ApiError as e:
+            self.reply(e.code, {"error": str(e)})
+        except ValueError:  # malformed JSON or Content-Length
+            self.reply(400, {"error": "Invalid request."})
+        except Exception as e:
+            log("ERROR in the forum view API", method, path, repr(e))
+            self.reply(500, {"error": "Something went wrong, please try again later."})
+
+
+def start_api():
+    server = ThreadingHTTPServer(("0.0.0.0", API_PORT), ApiHandler)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
 # --- setup -----------------------------------------------------------------
@@ -1163,11 +1538,8 @@ def create_index_room(fid):
               "channel": {"id": fid, "displayname": channel["name"],
                           "external_url": f"https://discord.com/channels/{GUILD}/{fid}"}}
     key = f"net.gocosmos.forum://discord/{GUILD}/{fid}"
-    topic = " · ".join(filter(None, [(channel.get("topic") or "").strip(),
-                                     "Each card opens a post's room",
-                                     "New post: !post Your project name (see the pinned message)"]))
     index = matrix("/_matrix/client/v3/createRoom", "POST", {
-        "name": "#" + channel["name"], "topic": topic,
+        "name": "#" + channel["name"], "topic": index_topic(fid),
         "preset": "private_chat", "visibility": "private",
         "initial_state": restricted_state(S["forums"][fid]["parent"]) + [
             {"type": "m.bridge", "state_key": key, "content": bridge},
@@ -1180,7 +1552,26 @@ def create_index_room(fid):
     save_state()
     pinned = send(index, instructions(fid), BOT_MXID)
     set_state(index, "m.room.pinned_events", "", {"pinned": [pinned]})
+    S["forums"][fid]["howto"] = HOWTO_VERSION
+    save_state()
     log(f"index room created for #{channel['name']}:", index)
+
+
+def update_howto(fid):
+    """Rewrite the pinned how-to and the topic of an index room made by an
+    earlier version (edits, so nobody is notified)."""
+    forum = S["forums"][fid]
+    if forum.get("howto") == HOWTO_VERSION:
+        return
+    try:
+        pinned = matrix(f"/_matrix/client/v3/rooms/{q(forum['index'])}/state/m.room.pinned_events/")
+    except urllib.error.HTTPError:
+        pinned = {}
+    for event_id in pinned.get("pinned", [])[:1]:
+        edit(forum["index"], event_id, instructions(fid))
+    set_state(forum["index"], "m.room.topic", "", {"topic": index_topic(fid)})
+    forum["howto"] = HOWTO_VERSION
+    save_state()
 
 
 def migrate_posts(fid):
@@ -1215,6 +1606,7 @@ def setup_forum(fid, spaces):
         set_state(forum["parent"], "m.space.child", forum["index"], {"via": [DOMAIN]})
         forum["linked"] = True
         save_state()
+    update_howto(fid)
     migrate_posts(fid)
     if not forum.get("members_joined"):
         members = matrix(f"/_matrix/client/v3/rooms/{q(forum['parent'])}/joined_members")["joined"]
@@ -1234,7 +1626,7 @@ def refresh_guild():
 
 
 def main():
-    global S, GUILD_SPACE
+    global S, CAT, GUILD_SPACE
     missing = [k for k in ("DISCORD_BOT_TOKEN", "BRIDGE_AS_TOKEN", "ONBOARD_ADMIN_TOKEN",
                            "GUILD_ID", "FORUM_CHANNELS") if not os.environ.get(k)]
     if missing:
@@ -1245,25 +1637,31 @@ def main():
         log("BRIDGE_AVATAR_PROXY_KEY not set: Matrix avatars will not show on Discord")
 
     S = load_state()
+    CAT = load_catalog()
     refresh_guild()
     spaces = bridged_spaces()
     GUILD_SPACE = spaces[GUILD]
     for fid in FORUMS:
         setup_forum(fid, spaces)
-    log(f"forum mirror up; {len(FORUMS)} forum(s), {len(S['posts'])} post(s)")
+    threading.Thread(target=catalog_worker, daemon=True).start()
+    start_api()
+    log(f"forum mirror up; {len(FORUMS)} forum(s), {len(S['posts'])} post(s), "
+        f"forum view API on :{API_PORT}")
 
     next_poll = next_refresh = 0
     while True:
         if time.time() >= next_refresh:
             try:
-                refresh_guild()
-                purge_due()
+                with LOCK:
+                    refresh_guild()
+                    purge_due()
             except Exception as e:
                 log("ERROR refreshing guild info", repr(e))
             next_refresh = time.time() + 3600
         if time.time() >= next_poll:
             try:
-                poll_discord()
+                with LOCK:
+                    poll_discord()
             except Exception as e:
                 log("ERROR polling Discord", repr(e))
             next_poll = time.time() + POLL_SECONDS
