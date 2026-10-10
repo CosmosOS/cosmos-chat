@@ -323,6 +323,23 @@ _Last updated: 2026-10-06_
   shut-down room still listed there put Draupnir in safe mode once), then
   shut down; it is to be purged later
 
+- [x] **#staff-chat bridged into the staff only space** (2026-10-10): the
+  bridge never made a room for it because the Wormhole bot could not see
+  the channel (@everyone denied View Channel, only Moderator allowed).
+  A View Channel allow for the `cosmos.bridge` role was added on #staff-chat
+  (that role is Wormhole's alone; the `Bot` role would also have let
+  FredBoat read it), and a bridge restart made it resync the guild and
+  create the room in the existing staff only space. Same rights as on
+  Discord and as #staff-bot-cmds: invite-only (the access sync keeps it
+  closed since @everyone cannot see it), invites admin-only (PL 50), and
+  the Matrix accounts whose Discord roles see the channel were invited
+  (valentinbreiz, zarlo, soultron17, gabolate.anime; the test1234567 test
+  account was left out). Relay webhook created (`!discord set-relay
+  --create` as @cosmosbridge, setup messages redacted), verified both ways.
+  History from before the bridge is not imported, as for every channel.
+  Staff who get a Matrix account later get it through onboarding; staff
+  already on Matrix who get the role later need an invite by hand
+
 ## ⏭️ Next (in order)
 
 - [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org
