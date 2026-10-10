@@ -55,6 +55,13 @@ draupnir`: deploys leave Draupnir running.
 - **Our own ban list** (`#cosmos-bans:gocosmos.org`): a ban added to it
   applies to every protected room, and a manual ban in one room offers to
   add it there.
+- **Policy change notifications** (`PolicyChangeNotification`): every
+  change to a watched list ("cme-bans updated with 1 change: ...", about 3
+  a day) is posted in #staff-bot-cmds, so on Discord too. Left unset,
+  Draupnir creates a room of its own for them; the room is set with
+  `!draupnir protections config set PolicyChangeNotification
+  notificationRoomID "!SCclVdOnANJSSBTzmO:gocosmos.org"` (quoted: a bare
+  room ID is refused with "Expected union value").
 
 Off on purpose: `BasicFloodingProtection` and `FirstMessageIsImageProtection`
 cannot exempt anyone, so they would ban the bridge's Discord users (a Discord

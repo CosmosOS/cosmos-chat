@@ -312,6 +312,17 @@ _Last updated: 2026-10-06_
   a CosmosOS-like space, 56 checks, passed on two consecutive runs) covers
   both, plus a control proving the old navigation still lands in Home
 
+- [x] **Draupnir's policy change notifications in #staff-bot-cmds**
+  (2026-10-10): updates of the watched ban lists (about 3 a day, nearly all
+  from the Community Moderation Effort list) went to a room Draupnir had
+  created for them, "@draupnir:gocosmos.org's Policy Change
+  Notifications". `PolicyChangeNotification`'s `notificationRoomID` now
+  points at #staff-bot-cmds (confirmed by `!draupnir status`), so staff
+  see them next to the other Draupnir messages, on Matrix and Discord.
+  The old room was removed from Draupnir's protected rooms first (a
+  shut-down room still listed there put Draupnir in safe mode once), then
+  shut down; it is to be purged later
+
 ## ⏭️ Next (in order)
 
 - [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org
