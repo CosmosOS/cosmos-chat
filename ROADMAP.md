@@ -272,7 +272,7 @@ _Last updated: 2026-10-06_
   the bridge can only reply in Discord threads from relay mode, not start
   them. So: #cosmos-help and #other-projects are now mirrored too (same
   index room + one room per post, 60 days imported), and an Element plugin
-  (`element/modules/cosmos-forum.js`, runtime module API, no fork) shows a
+  (`element/modules/cosmos-forum/index.js`, runtime module API, no fork) shows a
   forum room as a forum, in place of its timeline and next to the room
   list: all 1,585 Discord posts with search, tag filters, sorting and a
   New post form. Older posts are brought over (opening message + last 100
@@ -284,7 +284,15 @@ _Last updated: 2026-10-06_
   every hook is isolated: the API down or a renamed Element element only
   brings back the timeline of cards. Tested end to end against Element
   1.12.25 in Chromium (39 checks) before deploy. The pinned how-to and
-  topic of the index rooms now say "!post Your title" for every forum
+  topic of the index rooms now say "!post Your title" for every forum.
+  Deploy incident: the first push listed the plugin in `config.json` at a
+  path the Element image does not serve, and Element refuses to start when
+  a plugin fails to load, so chat.gocosmos.org showed an error page for
+  pages loaded between 11:22 and 11:25 UTC (open tabs were fine). The image
+  serves and registers plugins itself from `/modules/<name>/index.js`; the
+  local test had served the file from its own server, so it missed this.
+  After the fix, production was checked in Chromium: Element starts, the
+  plugin loads, and the API answers with real OpenID tokens
 
 ## ⏭️ Next (in order)
 

@@ -122,8 +122,9 @@ Discord's forum channels (#cosmos-projects, #cosmos-help, #other-projects)
 have no Matrix equivalent, and Element has no forum room type. The forum
 mirror (`forum/forum.py`) gives each forum an index room of post cards and
 one room per post, synced both ways with Discord. On chat.gocosmos.org an
-Element plugin (`element/modules/cosmos-forum.js`, loaded through
-`"modules"` in `element/config.json`, no fork) turns the index room into a
+Element plugin (`element/modules/cosmos-forum/index.js`, no fork; the
+Element image registers every `/modules/<name>/index.js` it finds, see
+`compose.yml`) turns the index room into a
 Discord-style forum, under Element's own room header and next to the room
 list:
 
@@ -154,7 +155,7 @@ compose.yml               # the whole stack (Caddy, Synapse, Postgres, Element, 
 caddy/Caddyfile           # TLS, routing, security headers
 synapse/                  # homeserver.example.yaml (template) + log.config
 element/config.json       # Element web configuration
-element/modules/          # Element plugins: cosmos-forum.js, the Discord-style forum view
+element/modules/          # Element plugins (<name>/index.js): cosmos-forum, the forum view
 postgres/                 # first-boot init script (bridge DB)
 bridge/                   # mautrix-discord setup guide (configs generated, gitignored)
 onboarding/onboard.py     # Discord reaction -> Matrix account daemon

@@ -35,7 +35,7 @@ list, and hourly for every post; the room is emptied at once and purged a
 week later). State lives in
 /state/forum-index.json. Pure stdlib, no dependencies.
 
-Element's forum view (element/modules/cosmos-forum.js) lists every post of
+Element's forum view (element/modules/cosmos-forum/index.js) lists every post of
 a forum, not only the mirrored ones, through a small HTTP API on API_PORT
 (Caddy serves it at chat.gocosmos.org/forum-api/):
   - GET /forums: the mirrored forums (index room, tags) and the post rooms

@@ -2,7 +2,8 @@
  * Cosmos forum view: a Discord-style forum for the forum channels that
  * forum/forum.py mirrors (#cosmos-projects, #cosmos-help, #other-projects).
  *
- * Element loads this file at startup ("modules" in element/config.json) and
+ * Element loads this file at startup (the Element image adds every
+ * /modules/<name>/index.js to config.json "modules", see compose.yml) and
  * waits for it before the app starts, so nothing here may throw out of
  * load(): each hook is installed on its own, and a failure only disables
  * that part of the view. React comes from Element (window.React).
