@@ -111,7 +111,10 @@ Arrivals show in one place, like on Discord: the onboarding daemon greets
 every new member of the space in #welcome, and chat.gocosmos.org hides
 join/leave, avatar and name changes by default (`setting_defaults` in
 `element/config.json`, each member can turn them back on). New accounts
-join the open channels directly, so no invite shows up in them.
+join the open channels directly, so no invite shows up in them. They also
+get Element's "People" section turned off on every CosmosOS space, so DMs
+stay in Home instead of following them into each category (a per-account,
+per-space setting the Element config cannot default).
 
 ## Repo layout
 

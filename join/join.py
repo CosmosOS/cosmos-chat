@@ -278,6 +278,28 @@ def join_bridged(room, name, mxid, user_token):
     return False
 
 
+def hide_space_people(mxid, user_token, rooms):
+    """Element lists your DMs with a space's members inside that space;
+    everyone is in every category, so DMs would follow you into each one.
+    That "People" section is a per-account, per-space Element setting the
+    config cannot default, so it is turned off on each bridged space."""
+    for room, name in rooms:
+        if name != "space":
+            continue
+        path = (f"/_matrix/client/v3/user/{quote(mxid, safe='')}/rooms/"
+                f"{quote(room, safe='')}/account_data/im.vector.web.settings")
+        try:
+            try:
+                current = matrix(path, token=user_token)
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise
+                current = {}
+            matrix(path, "PUT", {**current, "Spaces.showPeopleInSpace": False}, token=user_token)
+        except Exception as e:  # a display preference never fails signup
+            log("could not hide people in space", room, repr(e))
+
+
 def auto_join(mxid, user_token):
     """Join the account to every bridged room @everyone can see, mirroring
     the Discord reaction onboarding. Runs in a background thread so the
@@ -288,8 +310,9 @@ def auto_join(mxid, user_token):
            token=ADMIN_TOKEN)
     joined = 0
     try:
-        joined = sum(join_bridged(room, name, mxid, user_token)
-                     for room, name in bridged_rooms(visible))
+        rooms = bridged_rooms(visible)
+        joined = sum(join_bridged(room, name, mxid, user_token) for room, name in rooms)
+        hide_space_people(mxid, user_token, rooms)
     finally:
         try:
             matrix(override, "DELETE", token=ADMIN_TOKEN)

@@ -250,6 +250,28 @@ def join_bridged(room, name, mxid, user_token):
     return False
 
 
+def hide_space_people(mxid, user_token, rooms):
+    """Element lists your DMs with a space's members inside that space;
+    everyone is in every category, so DMs would follow you into each one.
+    That "People" section is a per-account, per-space Element setting the
+    config cannot default, so it is turned off on each bridged space."""
+    for room, name in rooms:
+        if name != "space":
+            continue
+        path = (f"/_matrix/client/v3/user/{quote(mxid, safe='')}/rooms/"
+                f"{quote(room, safe='')}/account_data/im.vector.web.settings")
+        try:
+            try:
+                current = matrix(path, token=user_token)
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    raise
+                current = {}
+            matrix(path, "PUT", {**current, "Spaces.showPeopleInSpace": False}, token=user_token)
+        except Exception as e:  # a display preference never fails onboarding
+            log("could not hide people in space", room, repr(e))
+
+
 def ensure_moderator(room, state, session):
     """Draupnir joined to the room as room admin (bans, redactions, join
     rules, server ACLs). Its access token is minted through the admin API
@@ -454,8 +476,9 @@ def process(user, state):
 
     # Only the channels this Discord member can actually see: staff get the
     # staff rooms, everyone else gets the public ones
-    joined = sum(join_bridged(room, name, mxid, user_token)
-                 for room, name in bridged_rooms(visible_channel_ids(member)))
+    rooms = bridged_rooms(visible_channel_ids(member))
+    joined = sum(join_bridged(room, name, mxid, user_token) for room, name in rooms)
+    hide_space_people(mxid, user_token, rooms)
 
     matrix(override, "DELETE")
     dm(uid,

@@ -247,6 +247,24 @@ _Last updated: 2026-10-06_
   bot, which the bridge never relays, so Discord's own join message is not
   doubled. The first run records existing members without greeting them
 
+- [x] **File downloads fixed in Element** (2026-10-09): clicking download
+  did nothing although Synapse served every file (200). Element saves files
+  through a sandboxed iframe of its own `/usercontent/` page, and
+  chat.gocosmos.org sent `X-Frame-Options: DENY` / `frame-ancestors 'none'`
+  on every path. `/usercontent/*` now allows same-origin framing only;
+  every other path still refuses all framing
+
+- [x] **DMs no longer follow you into every CosmosOS category**
+  (2026-10-10): Element lists your DMs with a space's members inside that
+  space ("People" section, `Spaces.showPeopleInSpace`), and everyone is in
+  every category. It is a per-account, per-space room account data setting
+  (`im.vector.web.settings`) that `setting_defaults` cannot reach, so it
+  was turned off on the 8 bridged spaces for the 47 existing local
+  accounts (334 settings, one-time pass through admin login tokens,
+  nobody had chosen a value yet), and the onboarding daemon and /join page
+  now turn it off for each new account. Accounts from other servers keep
+  Element's default; anyone can turn it back on in the space's Preferences
+
 ## ⏭️ Next (in order)
 
 - [ ] Put the signup link (https://chat.gocosmos.org/join) on gocosmos.org
